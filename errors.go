@@ -34,8 +34,11 @@ type APIError struct {
 	StatusCode int
 	// Code é o código técnico (ex.: POLICY_BLOCKED, IDEMPOTENCY_CONFLICT).
 	Code string
-	// Message é a mensagem do servidor, em português.
+	// Message é a mensagem técnica do servidor; é informativa e pode vir em inglês.
+	// Para mostrar ao usuário, prefira MessagePt e Fields.
 	Message string
+	// MessagePt é a explicação em pt-BR (details.message_pt), quando houver.
+	MessagePt string
 	// Details são os detalhes adicionais do erro, quando houver.
 	Details map[string]any
 	// Fields mapeia campo → mensagem nos erros de validação (details.fields).
@@ -109,13 +112,22 @@ func (e *APIError) Unwrap() []error {
 func (e *APIError) IsPolicyBlocked() bool { return e.Code == "POLICY_BLOCKED" }
 
 // ConnectionError indica falha de rede antes de obter resposta.
-type ConnectionError struct{ Err error }
+type ConnectionError struct {
+	Err        error
+	beforeSend bool
+}
+
+// BeforeSend indica que a falha ocorreu antes de a requisição ser enviada.
+func (e *ConnectionError) BeforeSend() bool { return e.beforeSend }
 
 func (e *ConnectionError) Error() string   { return "meshio: falha de conexão: " + e.Err.Error() }
 func (e *ConnectionError) Unwrap() []error { return []error{ErrConnection, e.Err} }
 
 // TimeoutError indica que a tentativa excedeu o tempo configurado.
-type TimeoutError struct{ Err error }
+type TimeoutError struct {
+	Err        error
+	beforeSend bool
+}
 
 func (e *TimeoutError) Error() string   { return "meshio: tempo esgotado: " + e.Err.Error() }
 func (e *TimeoutError) Unwrap() []error { return []error{ErrTimeout, e.Err} }
@@ -154,6 +166,9 @@ func newAPIError(resp *http.Response, body []byte) *APIError {
 			e.RequestID = env.RequestID
 		}
 		if e.Details != nil {
+			if m, ok := e.Details["message_pt"].(string); ok {
+				e.MessagePt = m
+			}
 			e.Fields = parseFields(e.Details["fields"])
 			if f, ok := e.Details["field"].(string); ok && e.Fields == nil && f != "" {
 				// Variante com um único campo: {"details":{"field":"limit"}}

@@ -164,9 +164,9 @@ switch {
 case errors.Is(err, meshio.ErrPolicyBlocked):
 	// envio recusado por política (opt-out, consentimento, limites…)
 case errors.Is(err, meshio.ErrValidation) && errors.As(err, &apiErr):
-	fmt.Println(apiErr.Fields) // campo → mensagem
+	fmt.Println(apiErr.Fields) // campo → mensagem em pt-BR
 case errors.As(err, &apiErr):
-	fmt.Println(apiErr.StatusCode, apiErr.Code, apiErr.Message, apiErr.RequestID)
+	fmt.Println(apiErr.StatusCode, apiErr.Code, apiErr.MessagePt, apiErr.RequestID)
 case errors.Is(err, meshio.ErrTimeout), errors.Is(err, meshio.ErrConnection):
 	// rede
 }
@@ -184,7 +184,16 @@ case errors.Is(err, meshio.ErrTimeout), errors.Is(err, meshio.ErrConnection):
 | 5xx | `ErrServer` |
 | `code == POLICY_BLOCKED` | `ErrPolicyBlocked` (mantém a categoria do status) |
 
-Falhas de rede, timeout, 429, 500, 502, 503 e 504 são repetidas até `WithMaxRetries` vezes (padrão 2), esperando `Retry-After` quando presente ou 0,5 s, 1 s, 2 s… (máx. 8 s) com jitter. Outros 4xx nunca são repetidos. POST, PATCH e DELETE só são repetidos em falha de rede ou 5xx quando levam `Idempotency-Key`.
+Regra de novas tentativas (até `WithMaxRetries`, padrão 2):
+
+- **429** é sempre repetido, esperando `Retry-After` quando presente.
+- **Falha de conexão antes do envio** (DNS, conexão recusada) é sempre repetida, em qualquer método.
+- **500, 502, 503, 504 e timeout** só são repetidos em GET ou quando a requisição leva `Idempotency-Key` (`Messages.Send`, `Billing.Topups.Create`). Os demais POST, PATCH e DELETE não são repetidos nesses casos.
+- **Outros 4xx** nunca são repetidos.
+
+Sem `Retry-After`, a espera é 0,5 s, 1 s, 2 s… (máx. 8 s) com jitter.
+
+`apiErr.Message` é a mensagem técnica do servidor, informativa e às vezes em inglês. Para o usuário final, use `apiErr.MessagePt` (de `details.message_pt`) e, em erros de validação, `apiErr.Fields` (de `details.fields`, sempre presente nesses erros).
 
 ## Dinheiro em micros
 
