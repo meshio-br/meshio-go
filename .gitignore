@@ -1,0 +1,16 @@
+# binários e artefatos de teste
+*.test
+*.out
+coverage.*
+/bin/
+/dist/
+
+# editores e sistema
+.idea/
+.vscode/
+.DS_Store
+
+# ambiente local
+.env
+.env.*
+__pycache__/
