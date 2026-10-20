@@ -11,10 +11,12 @@ import (
 	mrand "math/rand"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -205,8 +207,9 @@ func (c *Client) do(ctx context.Context, cl call, out any, opts []RequestOption)
 	for attempt := 0; ; attempt++ {
 		resp, err := c.attempt(ctx, cl, u, payload, ro.idempotencyKey)
 		if err != nil {
-			// Erro de rede/timeout: repetir só quando for seguro.
-			if ctx.Err() == nil && attempt < c.maxRetries && canRetryAfterSend {
+			// Falha de conexão antes do envio: sempre repetível. Timeout/erro após o envio:
+			// só em GET ou com Idempotency-Key.
+			if ctx.Err() == nil && attempt < c.maxRetries && (notSent(err) || canRetryAfterSend) {
 				if serr := c.sleep(ctx, backoff(attempt, 0)); serr != nil {
 					return serr
 				}
@@ -270,6 +273,9 @@ func (c *Client) attempt(ctx context.Context, cl call, u string, payload []byte,
 	if idemKey != "" {
 		req.Header.Set("Idempotency-Key", idemKey)
 	}
+	var wrote atomic.Bool
+	trace := &httptrace.ClientTrace{WroteHeaders: func() { wrote.Store(true) }}
+	req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		if cancel != nil {
@@ -280,14 +286,24 @@ func (c *Client) attempt(ctx context.Context, cl call, u string, payload []byte,
 		}
 		var ne net.Error
 		if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()) {
-			return nil, &TimeoutError{Err: err}
+			return nil, &TimeoutError{Err: err, beforeSend: !wrote.Load()}
 		}
-		return nil, &ConnectionError{Err: err}
+		return nil, &ConnectionError{Err: err, beforeSend: !wrote.Load()}
 	}
 	if cancel != nil {
 		resp.Body = &cancelBody{ReadCloser: resp.Body, cancel: cancel}
 	}
 	return resp, nil
+}
+
+// notSent indica falha de conexão ocorrida antes de a requisição ser enviada.
+func notSent(err error) bool {
+	var ce *ConnectionError
+	if errors.As(err, &ce) {
+		return ce.beforeSend
+	}
+	var te *TimeoutError
+	return errors.As(err, &te) && te.beforeSend
 }
 
 type cancelBody struct {

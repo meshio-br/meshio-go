@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -514,5 +515,121 @@ func TestOperationCoverage(t *testing.T) {
 	}
 	if count != 67 {
 		t.Errorf("contrato com %d operações, esperava 67", count)
+	}
+}
+
+func TestConnectionErrorBeforeSendRetriedForNonIdempotentPOST(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	url := srv.URL
+	srv.Close()
+	c := NewClient(WithAPIKey("k"), WithBaseURL(url))
+	waits := 0
+	c.sleep = func(context.Context, time.Duration) error { waits++; return nil }
+	_, err := c.ConnectLinks.Create(context.Background(), &CreateConnectLinkParams{BusinessID: "biz_1"})
+	var ce *ConnectionError
+	if !errors.As(err, &ce) || !ce.BeforeSend() {
+		t.Fatalf("esperava ConnectionError antes do envio, veio %T %v", err, err)
+	}
+	if waits != 2 {
+		t.Fatalf("esperava 2 novas tentativas, veio %d", waits)
+	}
+}
+
+func TestTimeoutAfterSendNotRetriedForNonIdempotentPOST(t *testing.T) {
+	var calls atomic.Int32
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		select {
+		case <-time.After(2 * time.Second):
+		case <-r.Context().Done():
+		}
+	}, WithTimeout(50*time.Millisecond))
+	_, err := c.ConnectLinks.Create(context.Background(), &CreateConnectLinkParams{BusinessID: "biz_1"})
+	if !errors.Is(err, ErrTimeout) || calls.Load() != 1 {
+		t.Fatalf("err=%v tentativas=%d", err, calls.Load())
+	}
+}
+
+func TestTimeoutRetriedForGETAndIdempotentPOST(t *testing.T) {
+	var mu sync.Mutex
+	n := 0
+	c, reqs, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		n++
+		first := n%2 == 1
+		mu.Unlock()
+		if first {
+			select {
+			case <-time.After(2 * time.Second):
+			case <-r.Context().Done():
+			}
+			return
+		}
+		if r.Method == http.MethodGet {
+			writeJSON(w, 200, map[string]any{"version": "1"})
+			return
+		}
+		writeJSON(w, 202, map[string]any{"id": "msg_1", "status": "queued"})
+	}, WithTimeout(100*time.Millisecond))
+	if _, err := c.Version.Get(context.Background()); err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	if _, err := c.Messages.Send(context.Background(), &SendMessageParams{ChannelID: "chn_1", To: "+5511", Type: "text"}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if len(*reqs) != 4 {
+		t.Fatalf("esperava 4 requisições, veio %d", len(*reqs))
+	}
+	if (*reqs)[2].Header.Get("Idempotency-Key") != (*reqs)[3].Header.Get("Idempotency-Key") {
+		t.Fatalf("a chave deve ser reutilizada")
+	}
+}
+
+func TestRateLimitRetriedForNonIdempotentPOST(t *testing.T) {
+	var mu sync.Mutex
+	n := 0
+	c, reqs, sleeps := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		n++
+		cur := n
+		mu.Unlock()
+		if cur == 1 {
+			w.Header().Set("Retry-After", "3")
+			writeJSON(w, 429, errBody("RATE_LIMITED", "too many requests", nil))
+			return
+		}
+		writeJSON(w, 201, map[string]any{"id": "cl_1"})
+	})
+	if _, err := c.ConnectLinks.Create(context.Background(), &CreateConnectLinkParams{BusinessID: "biz_1"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if len(*reqs) != 2 || len(*sleeps) != 1 || (*sleeps)[0] != 3*time.Second {
+		t.Fatalf("tentativas=%d esperas=%v", len(*reqs), *sleeps)
+	}
+}
+
+func TestServerErrorRetriedForIdempotentSend(t *testing.T) {
+	c, reqs, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 503, errBody("UNAVAILABLE", "unavailable", nil))
+	})
+	_, err := c.Messages.Send(context.Background(), &SendMessageParams{})
+	if !errors.Is(err, ErrServer) || len(*reqs) != 3 {
+		t.Fatalf("err=%v tentativas=%d", err, len(*reqs))
+	}
+}
+
+func TestMessagePtAndFieldsWithField(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 422, errBody("VALIDATION_FAILED", "Invalid phone", map[string]any{
+			"field": "to", "message_pt": "Telefone inválido.", "fields": map[string]any{"to": "Use o formato +5511999999999."},
+		}))
+	})
+	_, err := c.Messages.Send(context.Background(), &SendMessageParams{})
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("esperava *APIError: %v", err)
+	}
+	if apiErr.Message != "Invalid phone" || apiErr.MessagePt != "Telefone inválido." || apiErr.Fields["to"] != "Use o formato +5511999999999." {
+		t.Fatalf("campos inesperados: %+v", apiErr)
 	}
 }

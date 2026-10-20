@@ -39,10 +39,12 @@
 //
 // # Novas tentativas e idempotência
 //
-// Falhas de rede, 429, 500, 502, 503 e 504 são repetidas até WithMaxRetries
-// vezes (padrão 2), respeitando Retry-After ou com backoff exponencial com
-// jitter. POST só é repetido quando leva Idempotency-Key (Messages.Send e
-// Billing.Topups.Create), que o SDK gera quando não informada.
+// Até WithMaxRetries novas tentativas (padrão 2): 429 e falha de conexão antes
+// do envio são sempre repetidos; 500, 502, 503, 504 e timeout só em GET ou
+// quando a requisição leva Idempotency-Key (Messages.Send e
+// Billing.Topups.Create, que o SDK gera quando não informada); outros 4xx
+// nunca. A espera respeita Retry-After ou usa backoff exponencial com jitter
+// (0,5 s, 1 s, 2 s…, máx. 8 s).
 //
 // # Webhooks
 //
