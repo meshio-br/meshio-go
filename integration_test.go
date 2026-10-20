@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	mrand "math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -375,4 +377,148 @@ func TestIntegrationContractDrift(t *testing.T) {
 			t.Logf("DRIFT %s: %v", path, err)
 		}
 	}
+}
+
+// simPost envia JSON ao Simulador da Meta e decodifica a resposta.
+func simPost(t *testing.T, ctx context.Context, url string, body any, out any) {
+	t.Helper()
+	b, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
+	if err != nil {
+		t.Fatalf("simulador: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("simulador %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		t.Fatalf("simulador %s: %d %s", url, resp.StatusCode, raw)
+	}
+	if out != nil {
+		if err := json.Unmarshal(raw, out); err != nil {
+			t.Fatalf("simulador %s: %v", url, err)
+		}
+	}
+}
+
+// TestIntegrationConnectNumberAndSend conecta um número pelo Simulador, simula uma
+// mensagem recebida (abre a janela de 24 h) e envia texto livre com idempotência.
+func TestIntegrationConnectNumberAndSend(t *testing.T) {
+	c := integrationClient(t)
+	sim := strings.TrimRight(os.Getenv("MESHIO_TEST_SIM_URL"), "/")
+	if sim == "" {
+		t.Skip("MESHIO_TEST_SIM_URL não definido")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	bizs, err := c.Businesses.List(ctx, &BusinessesListParams{Limit: 1})
+	if err != nil || len(bizs.Data) == 0 {
+		t.Fatalf("businesses.list: %v", err)
+	}
+	biz := bizs.Data[0]
+	session, err := c.Channels.SignupSessions.Create(ctx, &CreateSignupSessionParams{BusinessID: biz.ID, Mode: "cloud_api"})
+	if err != nil {
+		t.Fatalf("signup_sessions.create: %v", err)
+	}
+	if got, err := c.Channels.SignupSessions.Get(ctx, session.SignupSessionID); err != nil || got.ID != session.SignupSessionID {
+		t.Fatalf("signup_sessions.get: %v", err)
+	}
+	if session.Launch.URL == nil {
+		t.Fatalf("sessão sem launch.url")
+	}
+	launch, err := url.Parse(*session.Launch.URL)
+	if err != nil {
+		t.Fatalf("launch.url: %v", err)
+	}
+	q := launch.Query()
+
+	// O Simulador faz o papel da janela de cadastro da Meta.
+	phone := fmt.Sprintf("+55 11 9%04d-%04d", 1000+mrand.Intn(9000), 1000+mrand.Intn(9000))
+	var submitted struct {
+		Assets struct {
+			Code          string `json:"code"`
+			WABAID        string `json:"waba_id"`
+			PhoneNumberID string `json:"phone_number_id"`
+		} `json:"assets"`
+	}
+	simPost(t, ctx, sim+"/es/dialog/submit", map[string]any{
+		"app_id": q.Get("app_id"), "config_id": q.Get("config_id"), "state": q.Get("state"),
+		"feature_type": nil, "origin": q.Get("origin"), "scenario": "success",
+		"business_name": "SDK go", "display_phone_number": phone, "verified_name": "SDK go",
+	}, &submitted)
+
+	ch, err := c.Channels.SignupSessions.Complete(ctx, session.SignupSessionID, &CompleteSignupParams{
+		State: session.State, Code: submitted.Assets.Code, WABAID: submitted.Assets.WABAID,
+		PhoneNumberID: submitted.Assets.PhoneNumberID, Event: "FINISH",
+	})
+	if err != nil {
+		t.Fatalf("signup_sessions.complete: %v", err)
+	}
+	defer func() {
+		confirm := true
+		if _, err := c.Channels.Disconnect(context.Background(), ch.ID, &DisconnectParams{Confirm: &confirm}); err != nil {
+			t.Errorf("channels.disconnect: %v", err)
+		}
+	}()
+	if ch.BusinessID != biz.ID {
+		t.Fatalf("canal em outra empresa: %s", ch.BusinessID)
+	}
+	if _, err := c.Channels.HealthCheck(ctx, ch.ID); err != nil {
+		t.Fatalf("channels.health_check: %v", err)
+	}
+	// A ativação é assíncrona (validação na Meta); aguarda até 20 s.
+	for i := 0; i < 40 && ch.Status != "active"; i++ {
+		time.Sleep(500 * time.Millisecond)
+		if ch, err = c.Channels.Get(ctx, ch.ID); err != nil {
+			t.Fatalf("channels.get: %v", err)
+		}
+	}
+	if ch.Status != "active" {
+		t.Fatalf("canal não ativou: %s", ch.Status)
+	}
+
+	// Mensagem do cliente abre a janela de 24 h para texto livre.
+	contact := fmt.Sprintf("+55119%08d", 10000000+mrand.Intn(89999999))
+	simPost(t, ctx, sim+"/_sim/inbound-message", map[string]any{
+		"phone_number_id": submitted.Assets.PhoneNumberID, "from": strings.TrimPrefix(contact, "+"), "text": "Oi",
+	}, nil)
+	for i := 0; i < 40; i++ {
+		tl, err := c.Conversations.Timeline(ctx, ch.ID, contact, &ConversationsTimelineParams{Limit: 1})
+		if err == nil && len(tl.Data) > 0 {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	params := &SendMessageParams{ChannelID: ch.ID, To: contact, Type: "text", Text: &TextParams{Body: "Teste do SDK Go"}, ClientReference: "sdk-go"}
+	key := "sdk-go-" + uniq()
+	first, err := c.Messages.Send(ctx, params, WithIdempotencyKey(key))
+	if err != nil {
+		t.Fatalf("messages.send: %v", err)
+	}
+	if first.Status != "queued" {
+		t.Fatalf("status inesperado: %s", first.Status)
+	}
+	var meta ResponseMeta
+	second, err := c.Messages.Send(ctx, params, WithIdempotencyKey(key), WithResponseMeta(&meta))
+	if err != nil {
+		t.Fatalf("repetição: %v", err)
+	}
+	if second.ID != first.ID || !meta.IdempotentReplay {
+		t.Fatalf("repetição deveria devolver a mesma mensagem com replay: %s %s %v", first.ID, second.ID, meta.IdempotentReplay)
+	}
+	other := *params
+	other.ClientReference = "other"
+	_, err = c.Messages.Send(ctx, &other, WithIdempotencyKey(key))
+	if !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("esperava IDEMPOTENCY_CONFLICT, veio %v", err)
+	}
+	if got, err := c.Messages.Get(ctx, first.ID); err != nil || got.ID != first.ID {
+		t.Fatalf("messages.get: %v", err)
+	}
+	t.Logf("mensagem %s aceita (%s); repetição idempotente e conflito confirmados", first.ID, first.Status)
 }
