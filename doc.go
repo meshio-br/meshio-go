@@ -2,7 +2,7 @@
 //
 // A API Meshio permite enviar e receber mensagens de WhatsApp em nome das
 // empresas atendidas por um integrador, conectar números, gerenciar templates,
-// receber eventos por webhook e acompanhar uso e cobrança.
+// receber eventos por webhook e acompanhar uso, assinatura por número e franquia.
 //
 // # Uso básico
 //
@@ -33,16 +33,19 @@
 //
 // Respostas de erro viram *APIError (status, código, mensagem, detalhes,
 // request id). Use errors.Is com as sentinelas por categoria (ErrNotFound,
-// ErrValidation, ErrRateLimit, ErrPolicyBlocked, ErrIdempotencyConflict…) e
-// errors.As para ler os campos. Falhas de rede são *ConnectionError ou
+// ErrValidation, ErrRateLimit, ErrPolicyBlocked, ErrIdempotencyConflict…) ou
+// pelos códigos da cobrança (ErrAllowanceExhausted, ErrSubscriptionRequired,
+// ErrNumberLimitReached, ErrGone…) e errors.As para ler os campos (MessagePt,
+// Reason, Replacement). Falhas de rede são *ConnectionError ou
 // *TimeoutError.
 //
 // # Novas tentativas e idempotência
 //
 // Até WithMaxRetries novas tentativas (padrão 2): 429 e falha de conexão antes
 // do envio são sempre repetidos; 500, 502, 503, 504 e timeout só em GET ou
-// quando a requisição leva Idempotency-Key (Messages.Send e
-// Billing.Topups.Create, que o SDK gera quando não informada); outros 4xx
+// quando a requisição leva Idempotency-Key (Messages.Send,
+// Billing.Subscription.Create, Billing.Subscription.ChangeSeats e
+// Billing.Invoices.Pay, que o SDK gera quando não informada); outros 4xx
 // nunca. A espera respeita Retry-After ou usa backoff exponencial com jitter
 // (0,5 s, 1 s, 2 s…, máx. 8 s).
 //
