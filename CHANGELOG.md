@@ -5,6 +5,8 @@ Todas as mudanças relevantes deste SDK. Formato baseado em [Keep a Changelog](h
 ## [0.1.0] - 2026-10-21
 
 ### Adicionado
+
+- Instalação direto do GitHub (`go get github.com/meshio-br/meshio-go@v0.1.0`).
 - Cliente `meshio.NewClient` com opções funcionais (`WithAPIKey`, `WithBaseURL`, `WithTimeout`, `WithMaxRetries`, `WithHTTPClient`) e leitura de `MESHIO_API_KEY`/`MESHIO_BASE_URL`.
 - Cobertura das 73 operações do contrato público v1 (empresas, canais, sessões de cadastro, registros da Meta, links de conexão, mensagens, conversas, templates, endpoints e entregas de webhook, eventos, uso, conformidade, consentimentos, opt-outs e cobrança).
 - Cobrança por assinatura de números: `Billing.Subscription` (`Get`, `Preview`, `Create`, `PreviewSeats`, `ChangeSeats`, `Cancel`, `Resume`, `UpdateOverage`, `UpdatePaymentMethod`), `Billing.Allowance` (`Get`, `Consumptions`, `ConsumptionsAll`), `Billing.Cycles`, `Billing.Invoices` (`List`, `ListAll`, `Get`, `Pay`), `Billing.Pricing`, `Billing.Wallet`, `Billing.Entries` (com `ExportCSV`) e `Billing.Topups` (somente histórico).

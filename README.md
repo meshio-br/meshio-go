@@ -10,6 +10,8 @@ Somente biblioteca padrão. Go 1.21 ou superior.
 go get github.com/meshio-br/meshio-go@v0.1.0
 ```
 
+O módulo é baixado direto do GitHub pela tag da versão.
+
 ## Configuração
 
 ```go
