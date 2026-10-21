@@ -15,10 +15,12 @@ import (
 var (
 	ErrBadRequest          = errors.New("meshio: requisição inválida")      // 400
 	ErrAuthentication      = errors.New("meshio: falha de autenticação")    // 401
+	ErrPaymentRequired     = errors.New("meshio: pagamento necessário")     // 402
 	ErrPermissionDenied    = errors.New("meshio: permissão negada")         // 403
 	ErrNotFound            = errors.New("meshio: recurso não encontrado")   // 404
 	ErrConflict            = errors.New("meshio: conflito")                 // 409
 	ErrIdempotencyConflict = errors.New("meshio: conflito de idempotência") // 409 IDEMPOTENCY_CONFLICT
+	ErrGone                = errors.New("meshio: recurso descontinuado")    // 410 DISCONTINUED
 	ErrValidation          = errors.New("meshio: dados inválidos")          // 422
 	ErrRateLimit           = errors.New("meshio: limite de requisições")    // 429
 	ErrServer              = errors.New("meshio: erro no servidor")         // 5xx
@@ -28,17 +30,53 @@ var (
 	ErrWebhookVerification = errors.New("meshio: assinatura de webhook inválida")
 )
 
+// Sentinelas da cobrança por assinatura, pelo código do erro. Mantêm a categoria do
+// status (por exemplo, ErrAllowanceExhausted também satisfaz ErrPaymentRequired).
+// O motivo detalhado vem em APIError.Reason (details.reason) e a explicação em
+// pt-BR em APIError.MessagePt.
+var (
+	ErrSubscriptionRequired     = errors.New("meshio: assinatura necessária")                 // 402 SUBSCRIPTION_REQUIRED
+	ErrSubscriptionPastDue      = errors.New("meshio: assinatura em atraso")                  // 402 SUBSCRIPTION_PAST_DUE
+	ErrAllowanceExhausted       = errors.New("meshio: franquia de mensagens esgotada")        // 402 ALLOWANCE_EXHAUSTED
+	ErrNumberLimitReached       = errors.New("meshio: limite de números conectados atingido") // 409 NUMBER_LIMIT_REACHED
+	ErrOverageUnavailable       = errors.New("meshio: excedente indisponível")                // 409 OVERAGE_UNAVAILABLE
+	ErrPaymentMethodUnavailable = errors.New("meshio: forma de pagamento indisponível")       // 422 PAYMENT_METHOD_UNAVAILABLE
+	ErrBillingNotConfigured     = errors.New("meshio: cobrança não configurada")              // 503 BILLING_NOT_CONFIGURED
+)
+
+// codeSentinels mapeia o código técnico para a sentinela correspondente.
+var codeSentinels = map[string]error{
+	"IDEMPOTENCY_CONFLICT":       ErrIdempotencyConflict,
+	"POLICY_BLOCKED":             ErrPolicyBlocked,
+	"DISCONTINUED":               ErrGone,
+	"SUBSCRIPTION_REQUIRED":      ErrSubscriptionRequired,
+	"SUBSCRIPTION_PAST_DUE":      ErrSubscriptionPastDue,
+	"ALLOWANCE_EXHAUSTED":        ErrAllowanceExhausted,
+	"NUMBER_LIMIT_REACHED":       ErrNumberLimitReached,
+	"OVERAGE_UNAVAILABLE":        ErrOverageUnavailable,
+	"PAYMENT_METHOD_UNAVAILABLE": ErrPaymentMethodUnavailable,
+	"BILLING_NOT_CONFIGURED":     ErrBillingNotConfigured,
+}
+
 // APIError é o erro devolvido pela API (corpo {"error":{"code","message","details"},"request_id"}).
 type APIError struct {
 	// StatusCode é o status HTTP.
 	StatusCode int
-	// Code é o código técnico (ex.: POLICY_BLOCKED, IDEMPOTENCY_CONFLICT).
+	// Code é o código técnico (ex.: POLICY_BLOCKED, ALLOWANCE_EXHAUSTED, IDEMPOTENCY_CONFLICT).
 	Code string
 	// Message é a mensagem técnica do servidor; é informativa e pode vir em inglês.
 	// Para mostrar ao usuário, prefira MessagePt e Fields.
 	Message string
 	// MessagePt é a explicação em pt-BR (details.message_pt), quando houver.
 	MessagePt string
+	// Reason é o motivo detalhado (details.reason), quando houver. Ex.: trial_ended,
+	// no_plan, subscription_canceled (SUBSCRIPTION_REQUIRED); allowance_exhausted,
+	// trial_allowance_exhausted, overage_limit_reached (ALLOWANCE_EXHAUSTED); trial,
+	// seats, no_active_plan (NUMBER_LIMIT_REACHED); discontinued (DISCONTINUED).
+	Reason string
+	// Replacement é a rota que substitui um recurso descontinuado
+	// (details.replacement em 410 DISCONTINUED), quando houver.
+	Replacement string
 	// Details são os detalhes adicionais do erro, quando houver.
 	Details map[string]any
 	// Fields mapeia campo → mensagem nos erros de validação (details.fields).
@@ -86,15 +124,16 @@ func (e *APIError) Unwrap() []error {
 		errs = append(errs, ErrBadRequest)
 	case e.StatusCode == 401:
 		errs = append(errs, ErrAuthentication)
+	case e.StatusCode == 402:
+		errs = append(errs, ErrPaymentRequired)
 	case e.StatusCode == 403:
 		errs = append(errs, ErrPermissionDenied)
 	case e.StatusCode == 404:
 		errs = append(errs, ErrNotFound)
 	case e.StatusCode == 409:
 		errs = append(errs, ErrConflict)
-		if e.Code == "IDEMPOTENCY_CONFLICT" {
-			errs = append(errs, ErrIdempotencyConflict)
-		}
+	case e.StatusCode == 410:
+		errs = append(errs, ErrGone)
 	case e.StatusCode == 422:
 		errs = append(errs, ErrValidation)
 	case e.StatusCode == 429:
@@ -102,8 +141,9 @@ func (e *APIError) Unwrap() []error {
 	case e.StatusCode >= 500:
 		errs = append(errs, ErrServer)
 	}
-	if e.Code == "POLICY_BLOCKED" {
-		errs = append(errs, ErrPolicyBlocked)
+	// ErrGone já entra pelo status 410; evita duplicar.
+	if s, ok := codeSentinels[e.Code]; ok && !(s == ErrGone && e.StatusCode == 410) {
+		errs = append(errs, s)
 	}
 	return errs
 }
@@ -168,6 +208,12 @@ func newAPIError(resp *http.Response, body []byte) *APIError {
 		if e.Details != nil {
 			if m, ok := e.Details["message_pt"].(string); ok {
 				e.MessagePt = m
+			}
+			if r, ok := e.Details["reason"].(string); ok {
+				e.Reason = r
+			}
+			if r, ok := e.Details["replacement"].(string); ok {
+				e.Replacement = r
 			}
 			e.Fields = parseFields(e.Details["fields"])
 			if f, ok := e.Details["field"].(string); ok && e.Fields == nil && f != "" {
