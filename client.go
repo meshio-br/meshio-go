@@ -120,11 +120,13 @@ func NewClient(opts ...Option) *Client {
 	c.Consents = &ConsentsService{c}
 	c.OptOuts = &OptOutsService{c}
 	c.Billing = &BillingService{
-		client:     c,
-		Entries:    &BillingEntriesService{c},
-		NumberFees: &BillingNumberFeesService{c},
-		Settings:   &BillingSettingsService{c},
-		Topups:     &TopupsService{c},
+		client:       c,
+		Subscription: &BillingSubscriptionService{c},
+		Allowance:    &BillingAllowanceService{c},
+		Cycles:       &BillingCyclesService{c},
+		Invoices:     &BillingInvoicesService{c},
+		Entries:      &BillingEntriesService{c},
+		Topups:       &TopupsService{c},
 	}
 	return c
 }
@@ -148,8 +150,10 @@ type requestOptions struct {
 	metas          []*ResponseMeta
 }
 
-// WithIdempotencyKey define a chave de idempotência (messages.send e topups.create).
-// Sem ela, o SDK gera um UUID v4 e reutiliza a mesma chave nas novas tentativas.
+// WithIdempotencyKey define a chave de idempotência. Messages.Send,
+// Billing.Subscription.Create, Billing.Subscription.ChangeSeats e
+// Billing.Invoices.Pay sempre enviam uma chave: sem esta opção, o SDK gera um
+// UUID v4 e reutiliza a mesma chave nas novas tentativas.
 func WithIdempotencyKey(key string) RequestOption {
 	return func(o *requestOptions) { o.idempotencyKey = key }
 }
@@ -168,7 +172,7 @@ type call struct {
 	path       string
 	query      url.Values
 	body       any
-	idempotent bool // envia Idempotency-Key e permite novas tentativas em POST
+	idempotent bool // envia Idempotency-Key (gerada se não informada) e permite novas tentativas em POST
 	raw        bool // resposta não-JSON (CSV)
 }
 

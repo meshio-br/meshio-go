@@ -783,10 +783,146 @@ func (p *OptOutsDeleteParams) query() url.Values {
 	return q
 }
 
+// BillingAllowanceConsumptionsListParams são os filtros de consulta de GET /v1/billing/allowance/consumptions (billing_allowance_consumptions_list).
+type BillingAllowanceConsumptionsListParams struct {
+	CycleID   string
+	ChannelID string
+	// Valores: "outbound", "inbound".
+	Direction string
+	// Valores: "included", "overage", "excess_unbilled", "no_cycle".
+	Classification string
+	Limit          int
+	Cursor         string
+}
+
+func (p *BillingAllowanceConsumptionsListParams) query() url.Values {
+	q := url.Values{}
+	if p == nil {
+		return q
+	}
+	if p.CycleID != "" {
+		q.Set("cycle_id", p.CycleID)
+	}
+	if p.ChannelID != "" {
+		q.Set("channel_id", p.ChannelID)
+	}
+	if p.Direction != "" {
+		q.Set("direction", p.Direction)
+	}
+	if p.Classification != "" {
+		q.Set("classification", p.Classification)
+	}
+	if p.Limit != 0 {
+		q.Set("limit", strconv.Itoa(p.Limit))
+	}
+	if p.Cursor != "" {
+		q.Set("cursor", p.Cursor)
+	}
+	return q
+}
+
+func (p *BillingAllowanceConsumptionsListParams) withCursor(c string) *BillingAllowanceConsumptionsListParams {
+	cp := BillingAllowanceConsumptionsListParams{}
+	if p != nil {
+		cp = *p
+	}
+	cp.Cursor = c
+	return &cp
+}
+
+func (p *BillingAllowanceConsumptionsListParams) cursorValue() string {
+	if p == nil {
+		return ""
+	}
+	return p.Cursor
+}
+
+// BillingCyclesListParams são os filtros de consulta de GET /v1/billing/cycles (billing_cycles_list).
+type BillingCyclesListParams struct {
+	Limit  int
+	Cursor string
+}
+
+func (p *BillingCyclesListParams) query() url.Values {
+	q := url.Values{}
+	if p == nil {
+		return q
+	}
+	if p.Limit != 0 {
+		q.Set("limit", strconv.Itoa(p.Limit))
+	}
+	if p.Cursor != "" {
+		q.Set("cursor", p.Cursor)
+	}
+	return q
+}
+
+func (p *BillingCyclesListParams) withCursor(c string) *BillingCyclesListParams {
+	cp := BillingCyclesListParams{}
+	if p != nil {
+		cp = *p
+	}
+	cp.Cursor = c
+	return &cp
+}
+
+func (p *BillingCyclesListParams) cursorValue() string {
+	if p == nil {
+		return ""
+	}
+	return p.Cursor
+}
+
+// BillingInvoicesListParams são os filtros de consulta de GET /v1/billing/invoices (billing_invoices_list).
+type BillingInvoicesListParams struct {
+	// Valores: "open", "paid", "void", "uncollectible".
+	Status string
+	// Valores: "subscription", "seat_addition", "overage".
+	Kind   string
+	Limit  int
+	Cursor string
+}
+
+func (p *BillingInvoicesListParams) query() url.Values {
+	q := url.Values{}
+	if p == nil {
+		return q
+	}
+	if p.Status != "" {
+		q.Set("status", p.Status)
+	}
+	if p.Kind != "" {
+		q.Set("kind", p.Kind)
+	}
+	if p.Limit != 0 {
+		q.Set("limit", strconv.Itoa(p.Limit))
+	}
+	if p.Cursor != "" {
+		q.Set("cursor", p.Cursor)
+	}
+	return q
+}
+
+func (p *BillingInvoicesListParams) withCursor(c string) *BillingInvoicesListParams {
+	cp := BillingInvoicesListParams{}
+	if p != nil {
+		cp = *p
+	}
+	cp.Cursor = c
+	return &cp
+}
+
+func (p *BillingInvoicesListParams) cursorValue() string {
+	if p == nil {
+		return ""
+	}
+	return p.Cursor
+}
+
 // BillingEntriesListParams são os filtros de consulta de GET /v1/billing/entries (billing_entries_list).
 type BillingEntriesListParams struct {
 	// comma-separated entry kinds
-	// Valores: "topup", "topup_refund", "topup_chargeback", "bonus", "bonus_revoked", "bonus_expired", "outbound_message", "inbound_message", "number_fee", "adjustment", "opening_balance", "chargeback_reversal", "closure_refund".
+	// Valores: "topup", "topup_refund", "topup_chargeback", "bonus", "bonus_revoked", "bonus_expired", "outbound_message", "inbound_message", "number_fee", "adjustment", "opening_balance", "chargeback_reversal", "closure_refund", "invoice_payment".
 	Kind       string
 	BusinessID string
 	ChannelID  string
@@ -846,7 +982,7 @@ func (p *BillingEntriesListParams) cursorValue() string {
 // BillingEntriesExportCSVParams são os filtros de consulta de GET /v1/billing/entries/export.csv (billing_entries_export_csv).
 type BillingEntriesExportCSVParams struct {
 	// comma-separated entry kinds
-	// Valores: "topup", "topup_refund", "topup_chargeback", "bonus", "bonus_revoked", "bonus_expired", "outbound_message", "inbound_message", "number_fee", "adjustment", "opening_balance", "chargeback_reversal", "closure_refund".
+	// Valores: "topup", "topup_refund", "topup_chargeback", "bonus", "bonus_revoked", "bonus_expired", "outbound_message", "inbound_message", "number_fee", "adjustment", "opening_balance", "chargeback_reversal", "closure_refund", "invoice_payment".
 	Kind       string
 	BusinessID string
 	ChannelID  string
@@ -877,78 +1013,6 @@ func (p *BillingEntriesExportCSVParams) query() url.Values {
 		q.Set("to", p.To)
 	}
 	return q
-}
-
-// BillingConsumptionParams são os filtros de consulta de GET /v1/billing/consumption (billing_consumption).
-type BillingConsumptionParams struct {
-	// YYYY-MM-DD (UTC, inclusive)
-	From string
-	// YYYY-MM-DD (UTC, inclusive)
-	To string
-	// Valores: "business", "channel", "kind", "day".
-	GroupBy string
-}
-
-func (p *BillingConsumptionParams) query() url.Values {
-	q := url.Values{}
-	if p == nil {
-		return q
-	}
-	if p.From != "" {
-		q.Set("from", p.From)
-	}
-	if p.To != "" {
-		q.Set("to", p.To)
-	}
-	if p.GroupBy != "" {
-		q.Set("group_by", p.GroupBy)
-	}
-	return q
-}
-
-// BillingNumberFeesListParams são os filtros de consulta de GET /v1/billing/number-fees (billing_number_fees_list).
-type BillingNumberFeesListParams struct {
-	ChannelID string
-	// Valores: "charged", "past_due", "exempt", "waived".
-	Status string
-	Limit  int
-	Cursor string
-}
-
-func (p *BillingNumberFeesListParams) query() url.Values {
-	q := url.Values{}
-	if p == nil {
-		return q
-	}
-	if p.ChannelID != "" {
-		q.Set("channel_id", p.ChannelID)
-	}
-	if p.Status != "" {
-		q.Set("status", p.Status)
-	}
-	if p.Limit != 0 {
-		q.Set("limit", strconv.Itoa(p.Limit))
-	}
-	if p.Cursor != "" {
-		q.Set("cursor", p.Cursor)
-	}
-	return q
-}
-
-func (p *BillingNumberFeesListParams) withCursor(c string) *BillingNumberFeesListParams {
-	cp := BillingNumberFeesListParams{}
-	if p != nil {
-		cp = *p
-	}
-	cp.Cursor = c
-	return &cp
-}
-
-func (p *BillingNumberFeesListParams) cursorValue() string {
-	if p == nil {
-		return ""
-	}
-	return p.Cursor
 }
 
 // TopupsListParams são os filtros de consulta de GET /v1/billing/topups (topups_list).

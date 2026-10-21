@@ -9,120 +9,164 @@ import (
 
 // Tipos de evento conhecidos. Novos tipos podem surgir; trate os desconhecidos sem falhar.
 const (
-	EventTypeBillingBalanceAdded      = "billing.balance_added"
-	EventTypeBillingBalanceLow        = "billing.balance_low"
-	EventTypeBillingChargesPending    = "billing.charges_pending"
-	EventTypeBillingTrialEnded        = "billing.trial_ended"
-	EventTypeBillingTrialEnding       = "billing.trial_ending"
-	EventTypeBusinessAllowanceReached = "business.allowance_reached"
-	EventTypeBusinessAllowanceWarning = "business.allowance_warning"
-	EventTypeBusinessComplianceHold   = "business.compliance_hold"
-	EventTypeChannelAttentionRequired = "channel.attention_required"
-	EventTypeChannelBillingPastDue    = "channel.billing_past_due"
-	EventTypeChannelBillingResumed    = "channel.billing_resumed"
-	EventTypeChannelBillingSuspended  = "channel.billing_suspended"
-	EventTypeChannelComplianceHold    = "channel.compliance_hold"
-	EventTypeChannelConnected         = "channel.connected"
-	EventTypeChannelDisconnected      = "channel.disconnected"
-	EventTypeChannelHealthChanged     = "channel.health_changed"
-	EventTypeContactOptedIn           = "contact.opted_in"
-	EventTypeContactOptedOut          = "contact.opted_out"
-	EventTypeMessagePolicyBlocked     = "message.policy_blocked"
-	EventTypeMessageReceived          = "message.received"
-	EventTypeMessageStatusChanged     = "message.status_changed"
-	EventTypeTemplateStatusChanged    = "template.status_changed"
-	EventTypeWebhookTest              = "webhook.test"
+	EventTypeBillingAllowanceExhausted  = "billing.allowance_exhausted"
+	EventTypeBillingAllowanceWarning    = "billing.allowance_warning"
+	EventTypeBillingInvoiceCreated      = "billing.invoice_created"
+	EventTypeBillingInvoicePaid         = "billing.invoice_paid"
+	EventTypeBillingInvoicePastDue      = "billing.invoice_past_due"
+	EventTypeBillingOverageLimitReached = "billing.overage_limit_reached"
+	EventTypeBillingSubscriptionUpdated = "billing.subscription_updated"
+	EventTypeBillingTrialEnded          = "billing.trial_ended"
+	EventTypeBillingTrialEnding         = "billing.trial_ending"
+	EventTypeBusinessComplianceHold     = "business.compliance_hold"
+	EventTypeChannelAttentionRequired   = "channel.attention_required"
+	EventTypeChannelComplianceHold      = "channel.compliance_hold"
+	EventTypeChannelConnected           = "channel.connected"
+	EventTypeChannelDisconnected        = "channel.disconnected"
+	EventTypeChannelHealthChanged       = "channel.health_changed"
+	EventTypeContactOptedIn             = "contact.opted_in"
+	EventTypeContactOptedOut            = "contact.opted_out"
+	EventTypeMessagePolicyBlocked       = "message.policy_blocked"
+	EventTypeMessageReceived            = "message.received"
+	EventTypeMessageStatusChanged       = "message.status_changed"
+	EventTypeTemplateStatusChanged      = "template.status_changed"
+	EventTypeWebhookTest                = "webhook.test"
 )
 
-// BillingBalanceAddedData é o campo data do evento billing.balance_added.
-// Money entered the integrator's BRL wallet: a confirmed top-up, a top-up bonus or trial promotional balance, an opening balance or a positive operator adjustment. Envelope business_id and channel_id are null.
-type BillingBalanceAddedData struct {
-	EntryID string `json:"entry_id"`
-	// Valores: "topup", "bonus", "opening_balance", "adjustment", "chargeback_reversal".
+// BillingAllowanceExhaustedData é o campo data do evento billing.allowance_exhausted.
+// Allowance exhausted (100% of the cycle allowance): new sends are refused with 402 ALLOWANCE_EXHAUSTED unless overage is available and authorized. Same data as billing.allowance.common.schema.json.
+type BillingAllowanceExhaustedData struct {
+	// Billing cycle id.
+	CycleID string `json:"cycle_id"`
+	// trial = free trial cycle; paid = subscription cycle.
+	// Valores: "trial", "paid".
+	CycleKind string `json:"cycle_kind,omitempty"`
+	// Messages included in the cycle, shared by all numbers of the integrator (base + prorated seat additions).
+	IncludedMessages int64 `json:"included_messages"`
+	// Messages counted in the cycle (sent and delivered or read + new inbound).
+	UsedMessages int64 `json:"used_messages"`
+	// floor(used_messages / included_messages * 100); may exceed 100 (inbound messages are always received and counted).
+	Percent int64 `json:"percent"`
+	// End of the cycle (renewal or trial end), when the allowance renews.
+	CycleEndsAt time.Time `json:"cycle_ends_at"`
+}
+
+// BillingAllowanceWarningData é o campo data do evento billing.allowance_warning.
+// Allowance warning (80% of the cycle allowance). Same data as billing.allowance.common.schema.json.
+type BillingAllowanceWarningData struct {
+	// Billing cycle id.
+	CycleID string `json:"cycle_id"`
+	// trial = free trial cycle; paid = subscription cycle.
+	// Valores: "trial", "paid".
+	CycleKind string `json:"cycle_kind,omitempty"`
+	// Messages included in the cycle, shared by all numbers of the integrator (base + prorated seat additions).
+	IncludedMessages int64 `json:"included_messages"`
+	// Messages counted in the cycle (sent and delivered or read + new inbound).
+	UsedMessages int64 `json:"used_messages"`
+	// floor(used_messages / included_messages * 100); may exceed 100 (inbound messages are always received and counted).
+	Percent int64 `json:"percent"`
+	// End of the cycle (renewal or trial end), when the allowance renews.
+	CycleEndsAt time.Time `json:"cycle_ends_at"`
+}
+
+// BillingInvoiceCreatedData é o campo data do evento billing.invoice_created.
+// An invoice was issued: the monthly fee of a cycle (issued before the renewal), prorated seats added mid-cycle or the overage of a closed cycle. Pay it through checkout_url (payment link) or, with consent, with the preserved paid balance. Envelope business_id and channel_id are null.
+type BillingInvoiceCreatedData struct {
+	InvoiceID      string `json:"invoice_id"`
+	SubscriptionID string `json:"subscription_id,omitempty"`
+	// subscription = monthly fee of the cycle; seat_addition = prorated seats added mid-cycle; overage = messages above the allowance (only with a published price and the integrator's authorization).
+	// Valores: "subscription", "seat_addition", "overage".
 	Kind string `json:"kind"`
-	// Amount added. Integer string in micros (R$ 1 = "1000000").
-	AmountMicros string `json:"amount_micros"`
-	// Wallet balance after the entry. Integer string in micros (R$ 1 = "1000000").
-	BalanceMicros string `json:"balance_micros"`
-	// Available after the entry. Integer string in micros (R$ 1 = "1000000").
-	AvailableMicros string `json:"available_micros"`
-	// Top-up that originated the entry (topup and campaign bonus).
-	TopupID *string `json:"topup_id"`
+	// Invoice total (multiple of 10000: whole cents). Integer string in micros (R$ 1 = "1000000").
+	TotalMicros string `json:"total_micros"`
+	// Due date.
+	DueAt time.Time `json:"due_at"`
+	// Payment link (Pix or card); null when the invoice is paid with the preserved balance or the link is not generated yet.
+	CheckoutURL *string `json:"checkout_url,omitempty"`
 }
 
-// BillingBalanceLowData é o campo data do evento billing.balance_low.
-// The integrator's free BRL balance (balance - reserved - pending) crossed below the configured low-balance threshold. Sent at most once per crossing. Money values are integer strings in micros (millionths of BRL). Envelope business_id and channel_id are null.
-type BillingBalanceLowData struct {
-	// Paid + bonus balance. Integer string in micros (R$ 1 = "1000000").
-	BalanceMicros string `json:"balance_micros"`
-	// Reserved for accepted sends awaiting delivery. Integer string in micros (R$ 1 = "1000000").
-	ReservedMicros string `json:"reserved_micros"`
-	// What new sends can still use (balance - reserved - pending + credit limit). Integer string in micros (R$ 1 = "1000000").
-	AvailableMicros string `json:"available_micros"`
-	// Configured alert threshold. Integer string in micros (R$ 1 = "1000000").
-	LowBalanceThresholdMicros string `json:"low_balance_threshold_micros"`
-	// Same as balance_micros as an exact decimal BRL string, e.g. "12.5".
-	Balance string `json:"balance"`
+// BillingInvoicePaidData é o campo data do evento billing.invoice_paid.
+// Payment of an invoice was confirmed (re-read from the payment provider, paid with the preserved balance or registered by Meshio). Envelope business_id and channel_id are null.
+type BillingInvoicePaidData struct {
+	InvoiceID      string `json:"invoice_id"`
+	SubscriptionID string `json:"subscription_id,omitempty"`
+	// subscription = monthly fee of the cycle; seat_addition = prorated seats added mid-cycle; overage = messages above the allowance (only with a published price and the integrator's authorization).
+	// Valores: "subscription", "seat_addition", "overage".
+	Kind string `json:"kind"`
+	// Invoice total. Integer string in micros (R$ 1 = "1000000").
+	TotalMicros string `json:"total_micros"`
+	// Payment confirmation time.
+	PaidAt time.Time `json:"paid_at"`
+	// wallet = preserved paid balance (opt-in); manual = registered by Meshio.
+	// Valores: "pix", "card", "wallet", "manual".
+	PaidVia string `json:"paid_via"`
 }
 
-// BillingChargesPendingData é o campo data do evento billing.charges_pending.
-// Charges (e.g. new inbound messages) could not be debited for lack of balance and were left pending; messages keep being received and delivered. Sent once per episode; pending charges are settled automatically on the next top-up. Envelope business_id and channel_id are null.
-type BillingChargesPendingData struct {
-	// Total pending. Integer string in micros (R$ 1 = "1000000").
-	PendingMicros string `json:"pending_micros"`
-	// Available at the time. Integer string in micros (R$ 1 = "1000000").
-	AvailableMicros string `json:"available_micros"`
-	// Valores: "insufficient_balance".
-	Reason string `json:"reason"`
+// BillingInvoicePastDueData é o campo data do evento billing.invoice_past_due.
+// An invoice is past due and unpaid: the subscription becomes past_due. After grace_until, new sends answer 402 SUBSCRIPTION_PAST_DUE until the invoice is paid; inbound messages, delivery events and webhooks never stop. Envelope business_id and channel_id are null.
+type BillingInvoicePastDueData struct {
+	InvoiceID      string `json:"invoice_id"`
+	SubscriptionID string `json:"subscription_id,omitempty"`
+	// subscription = monthly fee of the cycle; seat_addition = prorated seats added mid-cycle; overage = messages above the allowance (only with a published price and the integrator's authorization).
+	// Valores: "subscription", "seat_addition", "overage".
+	Kind string `json:"kind,omitempty"`
+	// Invoice total. Integer string in micros (R$ 1 = "1000000").
+	TotalMicros string `json:"total_micros"`
+	// Due date.
+	DueAt time.Time `json:"due_at"`
+	// End of the grace period; new sends are blocked from then on.
+	GraceUntil time.Time `json:"grace_until"`
+}
+
+// BillingOverageLimitReachedData é o campo data do evento billing.overage_limit_reached.
+// The authorized overage reached the integrator's BRL limit for the cycle: new sends above the allowance are refused with 402 ALLOWANCE_EXHAUSTED (reason overage_limit_reached). Sent at most once per cycle. Envelope business_id and channel_id are null.
+type BillingOverageLimitReachedData struct {
+	// Billing cycle id.
+	CycleID string `json:"cycle_id"`
+	// Overage limit authorized for the cycle. Integer string in micros (R$ 1 = "1000000").
+	OverageLimitMicros string `json:"overage_limit_micros"`
+	// Overage already counted in the cycle (sends awaiting delivery included). Integer string in micros (R$ 1 = "1000000").
+	OverageUsedMicros string `json:"overage_used_micros"`
+}
+
+// BillingSubscriptionUpdatedData é o campo data do evento billing.subscription_updated.
+// The integrator's subscription changed (activated, seats added, reduction scheduled or canceled, cancellation scheduled or reverted, canceled, overage or payment method updated, past due, reactivated). action names the change; the other fields are the subscription after it. Envelope business_id and channel_id are null.
+type BillingSubscriptionUpdatedData struct {
+	SubscriptionID string `json:"subscription_id"`
+	// Valores: "incomplete", "active", "past_due", "canceled".
+	Status string `json:"status"`
+	// Contracted seats (billable numbers).
+	Seats int64 `json:"seats"`
+	// Seat reduction scheduled for the next renewal; null when none.
+	ScheduledSeats *int64 `json:"scheduled_seats,omitempty"`
+	// End of the current paid cycle; null before the first payment.
+	CurrentPeriodEnd  *time.Time `json:"current_period_end,omitempty"`
+	CancelAtPeriodEnd bool       `json:"cancel_at_period_end"`
+	// Valores: "created", "activated", "seats_added", "seats_reduction_scheduled", "seats_reduction_canceled", "cancel_scheduled", "cancel_reverted", "canceled", "overage_updated", "payment_method_updated", "past_due", "reactivated".
+	Action string `json:"action"`
 }
 
 // BillingTrialEndedData é o campo data do evento billing.trial_ended.
-// The trial period ended: monthly number fees start and the normal model applies. Envelope business_id and channel_id are null.
+// The free trial ended. There is no automatic charge: new sends answer 402 SUBSCRIPTION_REQUIRED (reason trial_ended) until the integrator subscribes; inbound messages keep being received. A trial never restarts. Envelope business_id and channel_id are null.
 type BillingTrialEndedData struct {
+	// Billing cycle id.
+	CycleID string `json:"cycle_id,omitempty"`
+	// End of the trial.
 	EndedAt time.Time `json:"ended_at"`
 }
 
 // BillingTrialEndingData é o campo data do evento billing.trial_ending.
-// The integrator's trial period ends soon (sent N days before and on the last day, once each). Envelope business_id and channel_id are null.
+// The integrator's free trial ends soon (sent once, 3 days before the end). There is no automatic charge: to keep sending after the trial, subscribe. Envelope business_id and channel_id are null.
 type BillingTrialEndingData struct {
+	// Billing cycle id.
+	CycleID string `json:"cycle_id,omitempty"`
+	// End of the trial.
 	EndsAt   time.Time `json:"ends_at"`
 	DaysLeft int64     `json:"days_left"`
-	// Promotional/bonus balance still available. Integer string in micros (R$ 1 = "1000000").
-	BonusBalanceMicros string `json:"bonus_balance_micros"`
-	// Available balance. Integer string in micros (R$ 1 = "1000000").
-	AvailableMicros string `json:"available_micros"`
-}
-
-// BusinessAllowanceReachedData é o campo data do evento business.allowance_reached.
-// Monthly allowance reached (100%). Same data as business.allowance.common.schema.json.
-type BusinessAllowanceReachedData struct {
-	BusinessID string `json:"business_id"`
-	// Month YYYY-MM (America/Sao_Paulo).
-	Period string `json:"period"`
-	// Usage in the month. Integer string in micros (R$ 1 = "1000000").
-	UsedMicros string `json:"used_micros"`
-	// Monthly allowance. Integer string in micros.
-	AllowanceMicros string `json:"allowance_micros"`
-	// floor(used / allowance * 100); may exceed 100 (inbound messages are always charged).
-	Percent int64 `json:"percent"`
-	// First day of the next month (YYYY-MM-DD), when usage resets.
-	ResetsAt string `json:"resets_at,omitempty"`
-}
-
-// BusinessAllowanceWarningData é o campo data do evento business.allowance_warning.
-// Monthly allowance warning (80%). Same data as business.allowance.common.schema.json.
-type BusinessAllowanceWarningData struct {
-	BusinessID string `json:"business_id"`
-	// Month YYYY-MM (America/Sao_Paulo).
-	Period string `json:"period"`
-	// Usage in the month. Integer string in micros (R$ 1 = "1000000").
-	UsedMicros string `json:"used_micros"`
-	// Monthly allowance. Integer string in micros.
-	AllowanceMicros string `json:"allowance_micros"`
-	// floor(used / allowance * 100); may exceed 100 (inbound messages are always charged).
-	Percent int64 `json:"percent"`
-	// First day of the next month (YYYY-MM-DD), when usage resets.
-	ResetsAt string `json:"resets_at,omitempty"`
+	// Messages included in the trial.
+	MessageLimit int64 `json:"message_limit"`
+	// Messages counted in the trial so far.
+	UsedMessages int64 `json:"used_messages"`
 }
 
 // BusinessComplianceHoldData é o campo data do evento business.compliance_hold.
@@ -178,78 +222,6 @@ type ChannelAttentionRequiredDataCapabilities struct {
 	Receive           bool `json:"receive"`
 	BusinessAppEchoes bool `json:"business_app_echoes"`
 	HistorySync       bool `json:"history_sync"`
-}
-
-// ChannelBillingPastDueData é o campo data do evento channel.billing_past_due.
-// A monthly number fee could not be debited (available credits below the fee). The number keeps working during a 3-day grace period (grace_until); the charge is retried every 15 minutes and right after credits are added.
-type ChannelBillingPastDueData struct {
-	ChannelID  string `json:"channel_id"`
-	BusinessID string `json:"business_id"`
-	// Valores: "cloud_api", "coexistence".
-	Mode               string  `json:"mode"`
-	DisplayPhoneNumber *string `json:"display_phone_number"`
-	// grace: fee overdue but the number still sends until grace_until; suspended: outbound sends answer 402 CHANNEL_BILLING_SUSPENDED (inbound keeps working).
-	// Valores: "ok", "grace", "suspended".
-	// Valor: "grace".
-	BillingState string `json:"billing_state"`
-	// End of the open cycle (next renewal).
-	CurrentPeriodEnd *time.Time `json:"current_period_end"`
-	GraceUntil       *time.Time `json:"grace_until"`
-	SuspendedAt      *time.Time `json:"suspended_at"`
-	// Overdue fees of this number (past_due). Integer string in micros (R$ 1 = "1000000").
-	AmountDueMicros string `json:"amount_due_micros"`
-	// Wallet available balance at the time of the event. Integer string in micros (R$ 1 = "1000000").
-	AvailableMicros string `json:"available_micros"`
-	// Effective monthly fee for this number (default or custom price). Integer string in micros (R$ 1 = "1000000").
-	MonthlyFeeMicros string `json:"monthly_fee_micros"`
-}
-
-// ChannelBillingResumedData é o campo data do evento channel.billing_resumed.
-// All overdue fees of the number were paid (credits added) or waived by Meshio: sending works again immediately.
-type ChannelBillingResumedData struct {
-	ChannelID  string `json:"channel_id"`
-	BusinessID string `json:"business_id"`
-	// Valores: "cloud_api", "coexistence".
-	Mode               string  `json:"mode"`
-	DisplayPhoneNumber *string `json:"display_phone_number"`
-	// grace: fee overdue but the number still sends until grace_until; suspended: outbound sends answer 402 CHANNEL_BILLING_SUSPENDED (inbound keeps working).
-	// Valores: "ok", "grace", "suspended".
-	// Valor: "ok".
-	BillingState string `json:"billing_state"`
-	// End of the open cycle (next renewal).
-	CurrentPeriodEnd *time.Time `json:"current_period_end"`
-	GraceUntil       *time.Time `json:"grace_until"`
-	SuspendedAt      *time.Time `json:"suspended_at"`
-	// Overdue fees of this number (past_due). Integer string in micros (R$ 1 = "1000000").
-	AmountDueMicros string `json:"amount_due_micros"`
-	// Wallet available balance at the time of the event. Integer string in micros (R$ 1 = "1000000").
-	AvailableMicros string `json:"available_micros"`
-	// Effective monthly fee for this number (default or custom price). Integer string in micros (R$ 1 = "1000000").
-	MonthlyFeeMicros string `json:"monthly_fee_micros"`
-}
-
-// ChannelBillingSuspendedData é o campo data do evento channel.billing_suspended.
-// The grace period ended with the fee still overdue: outbound sends through this number now answer 402 CHANNEL_BILLING_SUSPENDED. Inbound messages keep being received and delivered to webhooks; the Meta connection is untouched.
-type ChannelBillingSuspendedData struct {
-	ChannelID  string `json:"channel_id"`
-	BusinessID string `json:"business_id"`
-	// Valores: "cloud_api", "coexistence".
-	Mode               string  `json:"mode"`
-	DisplayPhoneNumber *string `json:"display_phone_number"`
-	// grace: fee overdue but the number still sends until grace_until; suspended: outbound sends answer 402 CHANNEL_BILLING_SUSPENDED (inbound keeps working).
-	// Valores: "ok", "grace", "suspended".
-	// Valor: "suspended".
-	BillingState string `json:"billing_state"`
-	// End of the open cycle (next renewal).
-	CurrentPeriodEnd *time.Time `json:"current_period_end"`
-	GraceUntil       *time.Time `json:"grace_until"`
-	SuspendedAt      *time.Time `json:"suspended_at"`
-	// Overdue fees of this number (past_due). Integer string in micros (R$ 1 = "1000000").
-	AmountDueMicros string `json:"amount_due_micros"`
-	// Wallet available balance at the time of the event. Integer string in micros (R$ 1 = "1000000").
-	AvailableMicros string `json:"available_micros"`
-	// Effective monthly fee for this number (default or custom price). Integer string in micros (R$ 1 = "1000000").
-	MonthlyFeeMicros string `json:"monthly_fee_micros"`
 }
 
 // ChannelComplianceHoldData é o campo data do evento channel.compliance_hold.
@@ -547,16 +519,32 @@ type WebhookTestData struct {
 // decodeEventData decodifica data no tipo do evento; ok=false para tipos desconhecidos.
 func decodeEventData(eventType string, raw json.RawMessage) (v any, ok bool, err error) {
 	switch eventType {
-	case "billing.balance_added":
-		var d BillingBalanceAddedData
+	case "billing.allowance_exhausted":
+		var d BillingAllowanceExhaustedData
 		err = json.Unmarshal(raw, &d)
 		return &d, true, err
-	case "billing.balance_low":
-		var d BillingBalanceLowData
+	case "billing.allowance_warning":
+		var d BillingAllowanceWarningData
 		err = json.Unmarshal(raw, &d)
 		return &d, true, err
-	case "billing.charges_pending":
-		var d BillingChargesPendingData
+	case "billing.invoice_created":
+		var d BillingInvoiceCreatedData
+		err = json.Unmarshal(raw, &d)
+		return &d, true, err
+	case "billing.invoice_paid":
+		var d BillingInvoicePaidData
+		err = json.Unmarshal(raw, &d)
+		return &d, true, err
+	case "billing.invoice_past_due":
+		var d BillingInvoicePastDueData
+		err = json.Unmarshal(raw, &d)
+		return &d, true, err
+	case "billing.overage_limit_reached":
+		var d BillingOverageLimitReachedData
+		err = json.Unmarshal(raw, &d)
+		return &d, true, err
+	case "billing.subscription_updated":
+		var d BillingSubscriptionUpdatedData
 		err = json.Unmarshal(raw, &d)
 		return &d, true, err
 	case "billing.trial_ended":
@@ -567,32 +555,12 @@ func decodeEventData(eventType string, raw json.RawMessage) (v any, ok bool, err
 		var d BillingTrialEndingData
 		err = json.Unmarshal(raw, &d)
 		return &d, true, err
-	case "business.allowance_reached":
-		var d BusinessAllowanceReachedData
-		err = json.Unmarshal(raw, &d)
-		return &d, true, err
-	case "business.allowance_warning":
-		var d BusinessAllowanceWarningData
-		err = json.Unmarshal(raw, &d)
-		return &d, true, err
 	case "business.compliance_hold":
 		var d BusinessComplianceHoldData
 		err = json.Unmarshal(raw, &d)
 		return &d, true, err
 	case "channel.attention_required":
 		var d ChannelAttentionRequiredData
-		err = json.Unmarshal(raw, &d)
-		return &d, true, err
-	case "channel.billing_past_due":
-		var d ChannelBillingPastDueData
-		err = json.Unmarshal(raw, &d)
-		return &d, true, err
-	case "channel.billing_resumed":
-		var d ChannelBillingResumedData
-		err = json.Unmarshal(raw, &d)
-		return &d, true, err
-	case "channel.billing_suspended":
-		var d ChannelBillingSuspendedData
 		err = json.Unmarshal(raw, &d)
 		return &d, true, err
 	case "channel.compliance_hold":

@@ -550,41 +550,175 @@ func (s *OptOutsService) Delete(ctx context.Context, params *OptOutsDeleteParams
 
 // ---------------------------------------------------------------- billing
 
-// BillingService consulta carteira, preços, lançamentos e recargas.
+// BillingService reúne a cobrança por assinatura de números: assinatura e vagas,
+// franquia de mensagens, ciclos, faturas, preços e o histórico do saldo anterior.
 type BillingService struct {
-	client     *Client
-	Entries    *BillingEntriesService
-	NumberFees *BillingNumberFeesService
-	Settings   *BillingSettingsService
-	Topups     *TopupsService
+	client       *Client
+	Subscription *BillingSubscriptionService
+	Allowance    *BillingAllowanceService
+	Cycles       *BillingCyclesService
+	Invoices     *BillingInvoicesService
+	Entries      *BillingEntriesService
+	Topups       *TopupsService
 }
 
-// Wallet devolve a carteira (billing_wallet).
+// Pricing devolve as condições vigentes para o integrador: faixas, preço por vaga,
+// franquia por número e excedente (billing_pricing). Sem tabela publicada: 503 BILLING_NOT_CONFIGURED.
+func (s *BillingService) Pricing(ctx context.Context, opts ...RequestOption) (*Pricing, error) {
+	return getJSON[Pricing](ctx, s.client, "/v1/billing/pricing", nil, opts)
+}
+
+// Wallet devolve o saldo preservado do modelo anterior (pago e promocional) e o
+// consentimento de pagamento de faturas com saldo (billing_wallet).
 func (s *BillingService) Wallet(ctx context.Context, opts ...RequestOption) (*Wallet, error) {
 	return getJSON[Wallet](ctx, s.client, "/v1/billing/wallet", nil, opts)
 }
 
-// Pricing devolve os preços efetivos (billing_pricing).
-func (s *BillingService) Pricing(ctx context.Context, opts ...RequestOption) (*EffectivePricing, error) {
-	return getJSON[EffectivePricing](ctx, s.client, "/v1/billing/pricing", nil, opts)
+// BillingSubscriptionService consulta e altera a assinatura por número (vagas).
+type BillingSubscriptionService struct{ client *Client }
+
+// Get devolve a situação da assinatura: status, vagas, faixa, ciclo atual,
+// renovação, excedente e atraso (billing_subscription_get).
+func (s *BillingSubscriptionService) Get(ctx context.Context, opts ...RequestOption) (*Subscription, error) {
+	return getJSON[Subscription](ctx, s.client, "/v1/billing/subscription", nil, opts)
 }
 
-// Consumption devolve o consumo agregado (billing_consumption).
-func (s *BillingService) Consumption(ctx context.Context, params *BillingConsumptionParams, opts ...RequestOption) (*Consumption, error) {
-	return getJSON[Consumption](ctx, s.client, "/v1/billing/consumption", params.query(), opts)
+// Preview calcula faixa, preço por vaga, total mensal e franquia para uma
+// quantidade de vagas, sem contratar (billing_subscription_preview).
+func (s *BillingSubscriptionService) Preview(ctx context.Context, params *SubscriptionPreviewParams, opts ...RequestOption) (*SubscriptionPreview, error) {
+	return postJSON[SubscriptionPreview](ctx, s.client, "/v1/billing/subscription/preview", params, opts)
 }
 
-// Trial devolve a situação do período de teste (billing_trial).
-func (s *BillingService) Trial(ctx context.Context, opts ...RequestOption) (*Trial, error) {
-	return getJSON[Trial](ctx, s.client, "/v1/billing/trial", nil, opts)
+// Create contrata a assinatura e emite a primeira fatura (billing_subscription_create).
+// Envia Idempotency-Key (gerada se não informada): a mesma chave com o mesmo corpo
+// devolve o mesmo resultado, sem cobrar de novo.
+func (s *BillingSubscriptionService) Create(ctx context.Context, params *CreateSubscriptionParams, opts ...RequestOption) (*SubscriptionChangeResult, error) {
+	return doJSON[SubscriptionChangeResult](ctx, s.client, call{method: http.MethodPost, path: "/v1/billing/subscription", body: params, idempotent: true}, opts)
 }
 
-// BonusOffers lista as ofertas de bônus (billing_bonus_offers).
-func (s *BillingService) BonusOffers(ctx context.Context, opts ...RequestOption) (*BonusOfferList, error) {
-	return getJSON[BonusOfferList](ctx, s.client, "/v1/billing/bonus-offers", nil, opts)
+// PreviewSeats calcula o impacto de acrescentar ({Add}) ou reduzir ({Target})
+// vagas, sem alterar nada (billing_subscription_seats_preview).
+func (s *BillingSubscriptionService) PreviewSeats(ctx context.Context, params *SeatsPreviewParams, opts ...RequestOption) (*SeatsPreview, error) {
+	if params == nil {
+		params = &SeatsPreviewParams{}
+	}
+	return postJSON[SeatsPreview](ctx, s.client, "/v1/billing/subscription/seats/preview", params, opts)
 }
 
-// BillingEntriesService consulta o extrato.
+// ChangeSeats acrescenta vagas na hora ({Add}, fatura proporcional), agenda uma
+// redução para a renovação ({Target}) ou desfaz a redução agendada
+// ({CancelScheduledReduction}) (billing_subscription_seats_change).
+// Envia Idempotency-Key (gerada se não informada): com {Add}, a mesma chave
+// devolve a mesma fatura proporcional, sem cobrar de novo.
+func (s *BillingSubscriptionService) ChangeSeats(ctx context.Context, params *SeatsParams, opts ...RequestOption) (*SeatsChange, error) {
+	if params == nil {
+		params = &SeatsParams{}
+	}
+	return doJSON[SeatsChange](ctx, s.client, call{method: http.MethodPost, path: "/v1/billing/subscription/seats", body: params, idempotent: true}, opts)
+}
+
+// Cancel agenda o cancelamento para o fim do ciclo (billing_subscription_cancel).
+func (s *BillingSubscriptionService) Cancel(ctx context.Context, opts ...RequestOption) (*Subscription, error) {
+	return postJSON[Subscription](ctx, s.client, "/v1/billing/subscription/cancel", nil, opts)
+}
+
+// Resume desfaz o cancelamento agendado (billing_subscription_resume).
+func (s *BillingSubscriptionService) Resume(ctx context.Context, opts ...RequestOption) (*Subscription, error) {
+	return postJSON[Subscription](ctx, s.client, "/v1/billing/subscription/resume", nil, opts)
+}
+
+// UpdateOverage liga ou desliga o excedente e define o limite em micros por ciclo
+// (billing_subscription_overage_update). Sem preço de excedente: 409 OVERAGE_UNAVAILABLE.
+func (s *BillingSubscriptionService) UpdateOverage(ctx context.Context, params *OverageParams, opts ...RequestOption) (*Subscription, error) {
+	return doJSON[Subscription](ctx, s.client, call{method: http.MethodPatch, path: "/v1/billing/subscription/overage", body: params}, opts)
+}
+
+// UpdatePaymentMethod troca a forma de pagamento (invoice_link ou wallet)
+// (billing_subscription_payment_method_update).
+func (s *BillingSubscriptionService) UpdatePaymentMethod(ctx context.Context, params *PaymentMethodParams, opts ...RequestOption) (*Subscription, error) {
+	return doJSON[Subscription](ctx, s.client, call{method: http.MethodPatch, path: "/v1/billing/subscription/payment-method", body: params}, opts)
+}
+
+// BillingAllowanceService consulta a franquia de mensagens do ciclo.
+type BillingAllowanceService struct{ client *Client }
+
+// Get devolve a franquia do ciclo atual: incluídas, usadas, reservadas, restantes,
+// percentual, excedente e consumo por número (billing_allowance_get).
+func (s *BillingAllowanceService) Get(ctx context.Context, opts ...RequestOption) (*Allowance, error) {
+	return getJSON[Allowance](ctx, s.client, "/v1/billing/allowance", nil, opts)
+}
+
+// Consumptions devolve uma página das evidências de consumo, uma por mensagem
+// contabilizada (billing_allowance_consumptions_list).
+func (s *BillingAllowanceService) Consumptions(ctx context.Context, params *BillingAllowanceConsumptionsListParams, opts ...RequestOption) (*ConsumptionPage, error) {
+	return getJSON[ConsumptionPage](ctx, s.client, "/v1/billing/allowance/consumptions", params.query(), opts)
+}
+
+// ConsumptionsAll percorre todas as evidências de consumo.
+func (s *BillingAllowanceService) ConsumptionsAll(ctx context.Context, params *BillingAllowanceConsumptionsListParams, opts ...RequestOption) *Iter[Consumption] {
+	return newIter(ctx, cursorParam(params), func(ctx context.Context, cur string) ([]Consumption, *string, error) {
+		pg, err := s.Consumptions(ctx, params.withCursor(cur), opts...)
+		if err != nil {
+			return nil, nil, err
+		}
+		return pg.Data, pg.NextCursor, nil
+	})
+}
+
+// BillingCyclesService consulta o histórico de ciclos.
+type BillingCyclesService struct{ client *Client }
+
+// List devolve uma página de ciclos (billing_cycles_list).
+func (s *BillingCyclesService) List(ctx context.Context, params *BillingCyclesListParams, opts ...RequestOption) (*CyclePage, error) {
+	return getJSON[CyclePage](ctx, s.client, "/v1/billing/cycles", params.query(), opts)
+}
+
+// ListAll percorre todos os ciclos.
+func (s *BillingCyclesService) ListAll(ctx context.Context, params *BillingCyclesListParams, opts ...RequestOption) *Iter[CycleSummary] {
+	return newIter(ctx, cursorParam(params), func(ctx context.Context, cur string) ([]CycleSummary, *string, error) {
+		pg, err := s.List(ctx, params.withCursor(cur), opts...)
+		if err != nil {
+			return nil, nil, err
+		}
+		return pg.Data, pg.NextCursor, nil
+	})
+}
+
+// BillingInvoicesService consulta e paga faturas.
+type BillingInvoicesService struct{ client *Client }
+
+// List devolve uma página de faturas (billing_invoices_list).
+func (s *BillingInvoicesService) List(ctx context.Context, params *BillingInvoicesListParams, opts ...RequestOption) (*InvoicePage, error) {
+	return getJSON[InvoicePage](ctx, s.client, "/v1/billing/invoices", params.query(), opts)
+}
+
+// ListAll percorre todas as faturas.
+func (s *BillingInvoicesService) ListAll(ctx context.Context, params *BillingInvoicesListParams, opts ...RequestOption) *Iter[Invoice] {
+	return newIter(ctx, cursorParam(params), func(ctx context.Context, cur string) ([]Invoice, *string, error) {
+		pg, err := s.List(ctx, params.withCursor(cur), opts...)
+		if err != nil {
+			return nil, nil, err
+		}
+		return pg.Data, pg.NextCursor, nil
+	})
+}
+
+// Get devolve uma fatura com as linhas (billing_invoices_get).
+func (s *BillingInvoicesService) Get(ctx context.Context, invoiceID string, opts ...RequestOption) (*Invoice, error) {
+	return getJSON[Invoice](ctx, s.client, ep("/v1/billing/invoices/", invoiceID), nil, opts)
+}
+
+// Pay gera um novo link de pagamento ({Method: "link"}) ou paga com o saldo
+// anterior ({Method: "wallet"}) (billing_invoices_pay). Envia Idempotency-Key
+// (gerada se não informada): a mesma chave com o mesmo corpo não cobra de novo.
+func (s *BillingInvoicesService) Pay(ctx context.Context, invoiceID string, params *PayInvoiceParams, opts ...RequestOption) (*Invoice, error) {
+	if params == nil {
+		params = &PayInvoiceParams{}
+	}
+	return doJSON[Invoice](ctx, s.client, call{method: http.MethodPost, path: ep("/v1/billing/invoices/", invoiceID, "/pay"), body: params, idempotent: true}, opts)
+}
+
+// BillingEntriesService consulta o extrato do saldo anterior (inclui invoice_payment).
 type BillingEntriesService struct{ client *Client }
 
 // List devolve uma página de lançamentos (billing_entries_list).
@@ -608,44 +742,8 @@ func (s *BillingEntriesService) ExportCSV(ctx context.Context, params *BillingEn
 	return getCSV(ctx, s.client, "/v1/billing/entries/export.csv", params.query(), opts)
 }
 
-// BillingNumberFeesService consulta as mensalidades por número.
-type BillingNumberFeesService struct{ client *Client }
-
-// List devolve uma página de mensalidades (billing_number_fees_list).
-func (s *BillingNumberFeesService) List(ctx context.Context, params *BillingNumberFeesListParams, opts ...RequestOption) (*ChannelFeePage, error) {
-	return getJSON[ChannelFeePage](ctx, s.client, "/v1/billing/number-fees", params.query(), opts)
-}
-
-// ListAll percorre todas as mensalidades.
-func (s *BillingNumberFeesService) ListAll(ctx context.Context, params *BillingNumberFeesListParams, opts ...RequestOption) *Iter[ChannelFee] {
-	return newIter(ctx, cursorParam(params), func(ctx context.Context, cur string) ([]ChannelFee, *string, error) {
-		pg, err := s.List(ctx, params.withCursor(cur), opts...)
-		if err != nil {
-			return nil, nil, err
-		}
-		return pg.Data, pg.NextCursor, nil
-	})
-}
-
-// Summary devolve o resumo das mensalidades (billing_number_fees_summary).
-func (s *BillingNumberFeesService) Summary(ctx context.Context, opts ...RequestOption) (*NumberFeeSummary, error) {
-	return getJSON[NumberFeeSummary](ctx, s.client, "/v1/billing/number-fees/summary", nil, opts)
-}
-
-// BillingSettingsService lê e altera as configurações de cobrança.
-type BillingSettingsService struct{ client *Client }
-
-// Get devolve as configurações públicas (billing_settings_get).
-func (s *BillingSettingsService) Get(ctx context.Context, opts ...RequestOption) (*Settings, error) {
-	return getJSON[Settings](ctx, s.client, "/v1/billing/settings/public", nil, opts)
-}
-
-// Update altera as configurações e devolve a carteira (billing_settings_update).
-func (s *BillingSettingsService) Update(ctx context.Context, params *BillingSettingsParams, opts ...RequestOption) (*Wallet, error) {
-	return doJSON[Wallet](ctx, s.client, call{method: http.MethodPatch, path: "/v1/billing/settings", body: params}, opts)
-}
-
-// TopupsService gerencia recargas da carteira.
+// TopupsService consulta as recargas do modelo anterior (somente histórico;
+// não há novas recargas).
 type TopupsService struct{ client *Client }
 
 // List devolve uma página de recargas (topups_list).
@@ -664,20 +762,7 @@ func (s *TopupsService) ListAll(ctx context.Context, params *TopupsListParams, o
 	})
 }
 
-// Create cria uma recarga (topups_create). Envia Idempotency-Key (gerada se não informada).
-func (s *TopupsService) Create(ctx context.Context, params *TopupParams, opts ...RequestOption) (*Topup, error) {
-	return doJSON[Topup](ctx, s.client, call{method: http.MethodPost, path: "/v1/billing/topups", body: params, idempotent: true}, opts)
-}
-
 // Get devolve uma recarga (topups_get).
 func (s *TopupsService) Get(ctx context.Context, topupID string, opts ...RequestOption) (*Topup, error) {
 	return getJSON[Topup](ctx, s.client, ep("/v1/billing/topups/", topupID), nil, opts)
-}
-
-// RequestRefund pede o reembolso de uma recarga (topups_request_refund).
-func (s *TopupsService) RequestRefund(ctx context.Context, topupID string, params *RefundRequestParams, opts ...RequestOption) (*RefundRequest, error) {
-	if params == nil {
-		params = &RefundRequestParams{}
-	}
-	return postJSON[RefundRequest](ctx, s.client, ep("/v1/billing/topups/", topupID, "/refund-request"), params, opts)
 }

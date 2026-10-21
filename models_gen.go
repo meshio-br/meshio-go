@@ -4,6 +4,39 @@ package meshio
 
 import "time"
 
+// Allowance corresponde ao schema AllowanceOut do contrato.
+type Allowance struct {
+	// null when there is no open cycle (see access_reason)
+	CycleID *string `json:"cycle_id"`
+	// Valores: "trial", "paid".
+	Kind        *string    `json:"kind"`
+	PeriodStart *time.Time `json:"period_start"`
+	PeriodEnd   *time.Time `json:"period_end"`
+	// why there is no open cycle; null otherwise
+	// Valores: "trial_ended", "no_plan", "subscription_canceled", "subscription_incomplete", "trial_available".
+	AccessReason     *string `json:"access_reason"`
+	IncludedMessages int64   `json:"included_messages"`
+	// messages counted in the cycle (delivered sends + new received)
+	UsedMessages int64 `json:"used_messages"`
+	// accepted sends waiting for delivery (reserved)
+	HeldMessages int64 `json:"held_messages"`
+	// included - used - held, never below 0
+	RemainingMessages int64 `json:"remaining_messages"`
+	// used / included, integer percent (may exceed 100)
+	Percent          int64  `json:"percent"`
+	OutboundMessages int64  `json:"outbound_messages"`
+	InboundMessages  int64  `json:"inbound_messages"`
+	OverageMessages  int64  `json:"overage_messages"`
+	OverageMicros    string `json:"overage_micros"`
+	// snapshot of the cycle; null = overage unavailable
+	OveragePriceMicros *string `json:"overage_price_micros"`
+	OverageEnabled     bool    `json:"overage_enabled"`
+	OverageLimitMicros *string `json:"overage_limit_micros"`
+	// received above the allowance without overage (no charge)
+	ExcessUnbilledMessages int64         `json:"excess_unbilled_messages"`
+	ByNumber               []NumberUsage `json:"by_number"`
+}
+
 // ApprovalSummary corresponde ao schema ApprovalSummaryOut do contrato.
 type ApprovalSummary struct {
 	// Valores: "pending", "approved", "rejected".
@@ -23,63 +56,18 @@ type Attention struct {
 	Href string `json:"href"`
 }
 
-// BalanceStatus corresponde ao schema BalanceStatusOut do contrato.
-type BalanceStatus struct {
-	FeatureEnabled bool `json:"feature_enabled"`
-	// available BRL balance in micros (R$ 1 = 1000000)
-	AvailableMicros  *string `json:"available_micros"`
-	NumbersInGrace   int64   `json:"numbers_in_grace"`
-	NumbersSuspended int64   `json:"numbers_suspended"`
-}
-
-// BillingSettingsParams corresponde ao schema BillingSettingsIn do contrato.
-type BillingSettingsParams struct {
-	// integer string in micros (millionths of BRL): R$ 1 = 1000000, R$ 0.01 = 10000
-	LowBalanceThresholdMicros string `json:"low_balance_threshold_micros"`
-}
-
-// BonusOfferList corresponde ao schema BonusOfferListOut do contrato.
-type BonusOfferList struct {
-	Data []BonusOffer `json:"data"`
-}
-
-// BonusOffer corresponde ao schema BonusOfferOut do contrato.
-type BonusOffer struct {
-	CampaignID     string     `json:"campaign_id"`
-	Name           string     `json:"name"`
-	DisplayText    string     `json:"display_text"`
-	StartsAt       time.Time  `json:"starts_at"`
-	EndsAt         *time.Time `json:"ends_at"`
-	MinTopupMicros string     `json:"min_topup_micros"`
-	// Valores: "fixed", "percent".
-	BonusType        string  `json:"bonus_type"`
-	BonusFixedMicros string  `json:"bonus_fixed_micros"`
-	BonusPercentBp   int64   `json:"bonus_percent_bp"`
-	BonusCapMicros   *string `json:"bonus_cap_micros"`
-	// bonus at the minimum top-up
-	ExampleBonusMicros string `json:"example_bonus_micros"`
-	// ESTIMATE: sent messages the example bonus pays at the current outbound price
-	MessagesEquivalent *int64 `json:"messages_equivalent"`
-	RemainingUses      *int64 `json:"remaining_uses"`
-	BonusValidityDays  *int64 `json:"bonus_validity_days"`
-	FirstTopupOnly     bool   `json:"first_topup_only"`
-}
-
-// BusinessAllowance corresponde ao schema BusinessAllowanceOut do contrato.
-type BusinessAllowance struct {
-	// Allowance in micros (integer string); null = no limit
-	MonthlyMicros *string `json:"monthly_micros"`
-	// Usage in the current month (integer string in micros): charged messages plus sends still awaiting delivery
-	UsedMicros string `json:"used_micros"`
-	// Current period YYYY-MM (America/Sao_Paulo)
-	Period string `json:"period"`
-	// floor(used / monthly * 100); null without allowance; 100 when the allowance is 0
-	Percent *int64 `json:"percent"`
-	// none = no allowance; warning >= 80%; reached >= 100% (outbound sends refused)
-	// Valores: "none", "ok", "warning", "reached".
-	Status string `json:"status"`
-	// First day of the next month (YYYY-MM-DD), when usage resets
-	ResetsAt string `json:"resets_at"`
+// BillingStatus corresponde ao schema BillingStatusOut do contrato.
+type BillingStatus struct {
+	// none = never had a plan (trial still available); trial = free trial open; trial_ended = trial over without a subscription; incomplete = awaiting the first payment; null = the caller cannot read billing
+	// Valores: "none", "trial", "trial_ended", "incomplete", "active", "past_due", "canceled".
+	SubscriptionStatus *string `json:"subscription_status"`
+	// floor(counted / included * 100) of the open cycle; null without an open cycle
+	AllowancePercent *int64 `json:"allowance_percent"`
+	// End of the open cycle (renewal or trial end)
+	CycleEndsAt *time.Time `json:"cycle_ends_at"`
+	// Most relevant billing issue; also listed in `attention` with a pt-BR message
+	// Valores: "past_due_blocked", "past_due", "subscription_required", "allowance_exhausted", "allowance_warning", "trial_ending".
+	Attention *string `json:"attention"`
 }
 
 // BusinessCompliance corresponde ao schema BusinessComplianceOut do contrato.
@@ -96,22 +84,21 @@ type BusinessCompliance struct {
 
 // Business corresponde ao schema BusinessOut do contrato.
 type Business struct {
-	ID              string            `json:"id"`
-	IntegratorID    string            `json:"integrator_id"`
-	Name            string            `json:"name"`
-	LegalName       *string           `json:"legal_name"`
-	TaxID           *string           `json:"tax_id"`
-	Country         string            `json:"country"`
-	Timezone        string            `json:"timezone"`
-	ContactEmail    string            `json:"contact_email"`
-	ContactPhone    *string           `json:"contact_phone"`
-	Purpose         string            `json:"purpose"`
-	TermsAcceptedAt time.Time         `json:"terms_accepted_at"`
-	TermsAcceptedBy string            `json:"terms_accepted_by"`
-	Status          string            `json:"status"`
-	CreatedAt       time.Time         `json:"created_at"`
-	UpdatedAt       time.Time         `json:"updated_at"`
-	Allowance       BusinessAllowance `json:"allowance"`
+	ID              string    `json:"id"`
+	IntegratorID    string    `json:"integrator_id"`
+	Name            string    `json:"name"`
+	LegalName       *string   `json:"legal_name"`
+	TaxID           *string   `json:"tax_id"`
+	Country         string    `json:"country"`
+	Timezone        string    `json:"timezone"`
+	ContactEmail    string    `json:"contact_email"`
+	ContactPhone    *string   `json:"contact_phone"`
+	Purpose         string    `json:"purpose"`
+	TermsAcceptedAt time.Time `json:"terms_accepted_at"`
+	TermsAcceptedBy string    `json:"terms_accepted_by"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // BusinessPage corresponde ao schema BusinessPage do contrato.
@@ -133,55 +120,6 @@ type Capabilities struct {
 	Receive           bool `json:"receive"`
 	BusinessAppEchoes bool `json:"business_app_echoes"`
 	HistorySync       bool `json:"history_sync"`
-}
-
-// ChannelBilling corresponde ao schema ChannelBillingOut do contrato.
-type ChannelBilling struct {
-	// grace: fee overdue, still sending until grace_until; suspended: outbound sends blocked
-	// Valores: "ok", "grace", "suspended".
-	State string `json:"state"`
-	// end of the paid/open cycle = next charge
-	CurrentPeriodEnd *time.Time `json:"current_period_end"`
-	GraceUntil       *time.Time `json:"grace_until"`
-	// effective monthly fee for this number in micros (0 = free)
-	MonthlyFeeMicros string `json:"monthly_fee_micros"`
-	// always null: the price origin is internal to Meshio operators
-	// Valores: "default", "custom".
-	PriceSource *string `json:"price_source"`
-	// overdue monthly fees (past_due) for this number, in micros
-	AmountDueMicros string `json:"amount_due_micros"`
-}
-
-// ChannelFee corresponde ao schema ChannelFeeOut do contrato.
-type ChannelFee struct {
-	ID                 string  `json:"id"`
-	ChannelID          string  `json:"channel_id"`
-	BusinessID         string  `json:"business_id"`
-	BusinessName       *string `json:"business_name"`
-	DisplayPhoneNumber *string `json:"display_phone_number"`
-	// Valores: "cloud_api", "coexistence".
-	Mode string `json:"mode"`
-	// Valores: "cycle", "mode_change".
-	Kind            string    `json:"kind"`
-	PeriodStart     time.Time `json:"period_start"`
-	PeriodEnd       time.Time `json:"period_end"`
-	AmountMicros    string    `json:"amount_micros"`
-	UnitPriceMicros string    `json:"unit_price_micros"`
-	// Valores: "default", "custom".
-	PriceSource *string `json:"price_source"`
-	// Valores: "charged", "past_due", "exempt", "waived".
-	Status      string     `json:"status"`
-	ChargedAt   *time.Time `json:"charged_at"`
-	Attempts    int64      `json:"attempts"`
-	WaivedAt    *time.Time `json:"waived_at"`
-	WaiveReason *string    `json:"waive_reason"`
-	CreatedAt   time.Time  `json:"created_at"`
-}
-
-// ChannelFeePage corresponde ao schema ChannelFeePage do contrato.
-type ChannelFeePage struct {
-	Data       []ChannelFee `json:"data"`
-	NextCursor *string      `json:"next_cursor"`
 }
 
 // ChannelHistoryItem corresponde ao schema ChannelHistoryItem do contrato.
@@ -222,9 +160,8 @@ type Channel struct {
 	CreatedAt          time.Time      `json:"created_at"`
 	UpdatedAt          time.Time      `json:"updated_at"`
 	// Valores: "simulator", "live".
-	Environment string         `json:"environment"`
-	Billing     ChannelBilling `json:"billing"`
-	MetaHealth  MetaHealth     `json:"meta_health"`
+	Environment string     `json:"environment"`
+	MetaHealth  MetaHealth `json:"meta_health"`
 }
 
 // ChannelPage corresponde ao schema ChannelPage do contrato.
@@ -349,22 +286,35 @@ type ConsentRecorded struct {
 
 // Consumption corresponde ao schema ConsumptionOut do contrato.
 type Consumption struct {
-	Period Period `json:"period"`
-	// Valores: "business", "channel", "kind", "day".
-	GroupBy       string           `json:"group_by"`
-	Rows          []ConsumptionRow `json:"rows"`
-	TotalMicros   string           `json:"total_micros"`
-	TotalQuantity int64            `json:"total_quantity"`
+	ID            string  `json:"id"`
+	MessageID     string  `json:"message_id"`
+	MetaMessageID *string `json:"meta_message_id"`
+	CycleID       *string `json:"cycle_id"`
+	BusinessID    *string `json:"business_id"`
+	ChannelID     *string `json:"channel_id"`
+	// Valores: "outbound", "inbound".
+	Direction string  `json:"direction"`
+	Origin    *string `json:"origin"`
+	// Valores: "included", "overage", "excess_unbilled", "no_cycle".
+	Classification     string  `json:"classification"`
+	OveragePriceMicros *string `json:"overage_price_micros"`
+	// Valores: "delivered", "read", "inbound_received".
+	Evidence        string  `json:"evidence"`
+	StatusHistoryID *string `json:"status_history_id"`
+	// when Meshio accepted the send (outbound)
+	AcceptedAt *time.Time `json:"accepted_at"`
+	// Meta timestamp of the delivery/receipt (fallback: receipt)
+	OccurredAt time.Time `json:"occurred_at"`
+	CountedAt  time.Time `json:"counted_at"`
+	// counted in a different cycle from the one of acceptance/occurrence
+	Late        bool  `json:"late"`
+	RuleVersion int64 `json:"rule_version"`
 }
 
-// ConsumptionRow corresponde ao schema ConsumptionRowOut do contrato.
-type ConsumptionRow struct {
-	Key   string  `json:"key"`
-	Label *string `json:"label"`
-	// Valores: "outbound_message", "inbound_message", "number_fee".
-	Kind         string `json:"kind"`
-	Quantity     int64  `json:"quantity"`
-	AmountMicros string `json:"amount_micros"`
+// ConsumptionPage corresponde ao schema ConsumptionPage do contrato.
+type ConsumptionPage struct {
+	Data       []Consumption `json:"data"`
+	NextCursor *string       `json:"next_cursor"`
 }
 
 // Conversation corresponde ao schema ConversationOut do contrato.
@@ -408,6 +358,15 @@ type CreateSignupSessionParams struct {
 	Mode string `json:"mode"`
 }
 
+// CreateSubscriptionParams corresponde ao schema CreateSubscriptionIn do contrato.
+type CreateSubscriptionParams struct {
+	Seats int64 `json:"seats"`
+	// invoice_link (Pix or card per invoice) | wallet (preserved paid balance; requires accept_wallet_terms). card_auto_renewal and pix_automatic → 422 PAYMENT_METHOD_UNAVAILABLE
+	// Valores: "invoice_link", "wallet", "card_auto_renewal", "pix_automatic".
+	PaymentMethod     string `json:"payment_method,omitempty"`
+	AcceptWalletTerms *bool  `json:"accept_wallet_terms,omitempty"`
+}
+
 // CreateTemplateParams corresponde ao schema CreateTemplateIn do contrato.
 type CreateTemplateParams struct {
 	BusinessID string `json:"business_id"`
@@ -437,6 +396,35 @@ type CreateWebhookEndpointParams struct {
 	Status string `json:"status,omitempty"`
 }
 
+// CyclePage corresponde ao schema CyclePage do contrato.
+type CyclePage struct {
+	Data       []CycleSummary `json:"data"`
+	NextCursor *string        `json:"next_cursor"`
+}
+
+// CycleSummary corresponde ao schema CycleSummaryOut do contrato.
+type CycleSummary struct {
+	ID string `json:"id"`
+	// Valores: "trial", "paid".
+	Kind string `json:"kind"`
+	// Valores: "open", "closed".
+	Status                 string    `json:"status"`
+	PeriodStart            time.Time `json:"period_start"`
+	PeriodEnd              time.Time `json:"period_end"`
+	Seats                  int64     `json:"seats"`
+	MaxNumbers             int64     `json:"max_numbers"`
+	IncludedMessages       int64     `json:"included_messages"`
+	UsedMessages           int64     `json:"used_messages"`
+	HeldMessages           int64     `json:"held_messages"`
+	RemainingMessages      int64     `json:"remaining_messages"`
+	OverageMessages        int64     `json:"overage_messages"`
+	OverageMicros          string    `json:"overage_micros"`
+	ExcessUnbilledMessages int64     `json:"excess_unbilled_messages"`
+	UnitPriceMicros        string    `json:"unit_price_micros"`
+	OveragePriceMicros     *string   `json:"overage_price_micros"`
+	Complimentary          bool      `json:"complimentary"`
+}
+
 // DeliveryStats corresponde ao schema DeliveryStatsOut do contrato.
 type DeliveryStats struct {
 	// Deliveries created in the window.
@@ -453,37 +441,11 @@ type DisconnectParams struct {
 	Confirm *bool `json:"confirm,omitempty"`
 }
 
-// EffectivePrice corresponde ao schema EffectivePriceOut do contrato.
-type EffectivePrice struct {
-	// Valores: "outbound_message", "inbound_message", "number_fee_cloud_api", "number_fee_coexistence".
-	Field string `json:"field"`
-	// integer string in micros (millionths of BRL): R$ 1 = 1000000, R$ 0.01 = 10000
-	Micros string `json:"micros"`
-	// exact decimal BRL, e.g. 0.005
-	Brl string `json:"brl"`
-	// operator views only (null in the integrator API)
-	// Valores: "default", "custom".
-	Source *string `json:"source"`
-	// operator views only (null in the integrator API)
-	DefaultMicros *string `json:"default_micros"`
-}
-
-// EffectivePricing corresponde ao schema EffectivePricingOut do contrato.
-type EffectivePricing struct {
-	// false = no default table published (nothing is charged)
-	Available bool `json:"available"`
-	// Valor: "BRL".
-	Currency        string           `json:"currency,omitempty"`
-	DefaultVersion  *int64           `json:"default_version"`
-	OverrideVersion *int64           `json:"override_version"`
-	Prices          []EffectivePrice `json:"prices"`
-}
-
 // Entry corresponde ao schema EntryOut do contrato.
 type Entry struct {
 	ID        string    `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
-	// Valores: "topup", "topup_refund", "topup_chargeback", "bonus", "bonus_revoked", "bonus_expired", "outbound_message", "inbound_message", "number_fee", "adjustment", "opening_balance", "chargeback_reversal", "closure_refund".
+	// Valores: "topup", "topup_refund", "topup_chargeback", "bonus", "bonus_revoked", "bonus_expired", "outbound_message", "inbound_message", "number_fee", "adjustment", "opening_balance", "chargeback_reversal", "closure_refund", "invoice_payment".
 	Kind string `json:"kind"`
 	// signed: + credit to the wallet, - debit
 	AmountMicros string `json:"amount_micros"`
@@ -564,8 +526,53 @@ type IntegrationStatus struct {
 	Messages24h    Messages24h     `json:"messages_24h"`
 	Webhooks24h    Webhooks24h     `json:"webhooks_24h"`
 	Templates      TemplatesStatus `json:"templates"`
-	Balance        BalanceStatus   `json:"balance"`
+	Billing        BillingStatus   `json:"billing"`
 	Attention      []Attention     `json:"attention"`
+}
+
+// InvoiceLine corresponde ao schema InvoiceLineOut do contrato.
+type InvoiceLine struct {
+	Description     string     `json:"description"`
+	Quantity        int64      `json:"quantity"`
+	UnitPriceMicros string     `json:"unit_price_micros"`
+	AmountMicros    string     `json:"amount_micros"`
+	PeriodStart     *time.Time `json:"period_start"`
+	PeriodEnd       *time.Time `json:"period_end"`
+}
+
+// Invoice corresponde ao schema InvoiceOut do contrato.
+type Invoice struct {
+	ID             string  `json:"id"`
+	SubscriptionID string  `json:"subscription_id"`
+	CycleID        *string `json:"cycle_id"`
+	// Valores: "subscription", "seat_addition", "overage".
+	Kind string `json:"kind"`
+	// Valores: "open", "paid", "void", "uncollectible".
+	Status string `json:"status"`
+	// Valor: "BRL".
+	Currency    string    `json:"currency,omitempty"`
+	TotalMicros string    `json:"total_micros"`
+	PeriodStart time.Time `json:"period_start"`
+	PeriodEnd   time.Time `json:"period_end"`
+	IssuedAt    time.Time `json:"issued_at"`
+	DueAt       time.Time `json:"due_at"`
+	// sends keep working until this moment if unpaid
+	GraceUntil *time.Time `json:"grace_until"`
+	PaidAt     *time.Time `json:"paid_at"`
+	// Valores: "pix", "card", "wallet", "manual".
+	PaidVia *string `json:"paid_via"`
+	// payment link (Pix or card) while the invoice is open
+	CheckoutURL       *string    `json:"checkout_url"`
+	CheckoutExpiresAt *time.Time `json:"checkout_expires_at"`
+	// true = simulated provider (dev/test), no real money
+	Simulated bool          `json:"simulated,omitempty"`
+	Lines     []InvoiceLine `json:"lines"`
+}
+
+// InvoicePage corresponde ao schema InvoicePage do contrato.
+type InvoicePage struct {
+	Data       []Invoice `json:"data"`
+	NextCursor *string   `json:"next_cursor"`
 }
 
 // Launch corresponde ao schema LaunchOut do contrato.
@@ -863,47 +870,19 @@ type MetaLogResult struct {
 	Label string `json:"label"`
 }
 
-// ModeTotal corresponde ao schema ModeTotalOut do contrato.
-type ModeTotal struct {
-	Count     int64  `json:"count"`
-	FeeMicros string `json:"fee_micros"`
-	// Valores: "default", "custom".
-	Source string `json:"source"`
+// NumberLimit corresponde ao schema NumberLimitOut do contrato.
+type NumberLimit struct {
+	Limit int64 `json:"limit"`
+	// Valores: "trial", "seats", "no_active_plan", "trial_available".
+	Reason string `json:"reason"`
 }
 
-// NumberFeeSummary corresponde ao schema NumberFeeSummaryOut do contrato.
-type NumberFeeSummary struct {
-	FeatureEnabled bool `json:"feature_enabled"`
-	BillingExempt  bool `json:"billing_exempt"`
-	// Valor: "monthly".
-	Cycle              string               `json:"cycle,omitempty"`
-	ActiveNumbers      int64                `json:"active_numbers"`
-	MonthlyTotalMicros string               `json:"monthly_total_micros"`
-	ByMode             map[string]ModeTotal `json:"by_mode"`
-	NextChargeAt       *time.Time           `json:"next_charge_at"`
-	NextChargeMicros   string               `json:"next_charge_micros"`
-	PastDueMicros      string               `json:"past_due_micros"`
-	SuspendedChannels  int64                `json:"suspended_channels"`
-	ChannelsInGrace    int64                `json:"channels_in_grace"`
-	RunwayDays         *int64               `json:"runway_days"`
-	Numbers            []NumberLine         `json:"numbers"`
-}
-
-// NumberLine corresponde ao schema NumberLineOut do contrato.
-type NumberLine struct {
+// NumberUsage corresponde ao schema NumberUsageOut do contrato.
+type NumberUsage struct {
 	ChannelID          string  `json:"channel_id"`
-	BusinessID         string  `json:"business_id"`
-	BusinessName       *string `json:"business_name"`
 	DisplayPhoneNumber *string `json:"display_phone_number"`
-	VerifiedName       *string `json:"verified_name"`
-	// Valores: "cloud_api", "coexistence".
-	Mode             string `json:"mode"`
-	MonthlyFeeMicros string `json:"monthly_fee_micros"`
-	// Valores: "ok", "grace", "suspended".
-	State           string     `json:"state"`
-	NextChargeAt    *time.Time `json:"next_charge_at"`
-	GraceUntil      *time.Time `json:"grace_until"`
-	AmountDueMicros string     `json:"amount_due_micros"`
+	OutboundMessages   int64   `json:"outbound_messages"`
+	InboundMessages    int64   `json:"inbound_messages"`
 }
 
 // OptInParams corresponde ao schema OptInIn do contrato.
@@ -942,6 +921,25 @@ type OptOut struct {
 type OptOutPage struct {
 	Data       []OptOut `json:"data"`
 	NextCursor *string  `json:"next_cursor,omitempty"`
+}
+
+// OverageParams corresponde ao schema OverageIn do contrato.
+type OverageParams struct {
+	Enabled bool `json:"enabled"`
+	// limit per cycle, in micros
+	LimitMicros string `json:"limit_micros,omitempty"`
+}
+
+// Overage corresponde ao schema OverageOut do contrato.
+type Overage struct {
+	// null = overage unavailable
+	PriceMicros *string `json:"price_micros"`
+	Available   bool    `json:"available"`
+	// Valores: "price_undefined", "trial", "feature_disabled", "no_subscription".
+	UnavailableReason *string `json:"unavailable_reason"`
+	Enabled           bool    `json:"enabled"`
+	LimitMicros       *string `json:"limit_micros"`
+	UsedMicros        string  `json:"used_micros"`
 }
 
 // OverviewChannels corresponde ao schema OverviewChannelsOut do contrato.
@@ -990,15 +988,55 @@ type OverviewWebhooks struct {
 	Failed int64 `json:"failed"`
 }
 
-// Period corresponde ao schema PeriodOut do contrato.
-type Period struct {
-	From string `json:"from"`
-	To   string `json:"to"`
+// PastDue corresponde ao schema PastDueOut do contrato.
+type PastDue struct {
+	InvoiceID      string    `json:"invoice_id"`
+	AmountMicros   string    `json:"amount_micros"`
+	Since          time.Time `json:"since"`
+	GraceUntil     time.Time `json:"grace_until"`
+	SendingBlocked bool      `json:"sending_blocked"`
 }
 
-// RefundRequestParams corresponde ao schema RefundRequestIn do contrato.
-type RefundRequestParams struct {
-	Reason string `json:"reason"`
+// PayInvoiceParams corresponde ao schema PayInvoiceIn do contrato.
+type PayInvoiceParams struct {
+	// Valores: "link", "wallet".
+	Method string `json:"method,omitempty"`
+	// required to pay with the preserved paid balance without a prior opt-in
+	AcceptWalletTerms *bool `json:"accept_wallet_terms,omitempty"`
+}
+
+// PaymentMethodParams corresponde ao schema PaymentMethodIn do contrato.
+type PaymentMethodParams struct {
+	// Valores: "invoice_link", "wallet", "card_auto_renewal", "pix_automatic".
+	PaymentMethod     string `json:"payment_method"`
+	AcceptWalletTerms *bool  `json:"accept_wallet_terms,omitempty"`
+}
+
+// Pricing corresponde ao schema PricingOut do contrato.
+type Pricing struct {
+	// Valor: "BRL".
+	Currency           string     `json:"currency,omitempty"`
+	PlanVersion        *int64     `json:"plan_version"`
+	EffectiveFrom      *time.Time `json:"effective_from"`
+	Tiers              []Tier     `json:"tiers"`
+	MessagesPerNumber  int64      `json:"messages_per_number"`
+	OveragePriceMicros *string    `json:"overage_price_micros"`
+	Complimentary      bool       `json:"complimentary"`
+	// a custom condition (override) applies to this integrator
+	CustomConditions bool       `json:"custom_conditions"`
+	Trial            TrialTerms `json:"trial"`
+	GraceDays        int64      `json:"grace_days"`
+	RenewalLeadDays  int64      `json:"renewal_lead_days"`
+	// Valor: "True".
+	MetaFeesSeparate bool `json:"meta_fees_separate,omitempty"`
+}
+
+// PromotionalLot corresponde ao schema PromotionalLotOut do contrato.
+type PromotionalLot struct {
+	RemainingMicros string     `json:"remaining_micros"`
+	ExpiresAt       *time.Time `json:"expires_at"`
+	Usable          bool       `json:"usable"`
+	Label           string     `json:"label"`
 }
 
 // RefundRequest corresponde ao schema RefundRequestOut do contrato.
@@ -1018,6 +1056,80 @@ type RejectedTemplate struct {
 	ID     string  `json:"id"`
 	Name   string  `json:"name"`
 	Reason *string `json:"reason"`
+}
+
+// Renewal corresponde ao schema RenewalOut do contrato.
+type Renewal struct {
+	At              time.Time `json:"at"`
+	Seats           int64     `json:"seats"`
+	UnitPriceMicros string    `json:"unit_price_micros"`
+	TotalMicros     string    `json:"total_micros"`
+	// renewal invoice already issued (renewal_lead_days before)
+	InvoiceID *string `json:"invoice_id"`
+}
+
+// SeatAddition corresponde ao schema SeatAdditionOut do contrato.
+type SeatAddition struct {
+	Add      int64 `json:"add"`
+	NewSeats int64 `json:"new_seats"`
+	Tier     Tier  `json:"tier"`
+	// price of the new seats (tier of the new total)
+	UnitPriceMicros        string `json:"unit_price_micros"`
+	RemainingDays          int64  `json:"remaining_days"`
+	CycleDays              int64  `json:"cycle_days"`
+	ProratedAmountMicros   string `json:"prorated_amount_micros"`
+	AddedMessages          int64  `json:"added_messages"`
+	IncludedMessagesAfter  int64  `json:"included_messages_after"`
+	RenewalSeats           int64  `json:"renewal_seats"`
+	RenewalUnitPriceMicros string `json:"renewal_unit_price_micros"`
+	RenewalTotalMicros     string `json:"renewal_total_micros"`
+}
+
+// SeatReduction corresponde ao schema SeatReductionOut do contrato.
+type SeatReduction struct {
+	Target           int64 `json:"target"`
+	CurrentSeats     int64 `json:"current_seats"`
+	ConnectedNumbers int64 `json:"connected_numbers"`
+	Allowed          bool  `json:"allowed"`
+	// Valores: "target_not_lower", "too_many_connected_numbers", "seats_invalid".
+	BlockReason            *string `json:"block_reason"`
+	Tier                   Tier    `json:"tier"`
+	RenewalUnitPriceMicros string  `json:"renewal_unit_price_micros"`
+	RenewalTotalMicros     string  `json:"renewal_total_micros"`
+	// the reduction applies at the next renewal (no credit)
+	EffectiveAt *time.Time `json:"effective_at"`
+}
+
+// SeatsChange corresponde ao schema SeatsChangeOut do contrato.
+type SeatsChange struct {
+	Subscription Subscription `json:"subscription"`
+	Invoice      *Invoice     `json:"invoice"`
+	// the payment link could not be created now; retry with POST /v1/billing/invoices/{id}/pay
+	// Valor: "provider_unavailable".
+	PaymentLinkError *string        `json:"payment_link_error,omitempty"`
+	Addition         *SeatAddition  `json:"addition,omitempty"`
+	Reduction        *SeatReduction `json:"reduction,omitempty"`
+}
+
+// SeatsParams corresponde ao schema SeatsIn do contrato.
+type SeatsParams struct {
+	// immediate, prorated invoice
+	Add *int64 `json:"add,omitempty"`
+	// reduction at the next renewal
+	Target                   *int64 `json:"target,omitempty"`
+	CancelScheduledReduction *bool  `json:"cancel_scheduled_reduction,omitempty"`
+}
+
+// SeatsPreviewParams corresponde ao schema SeatsPreviewIn do contrato.
+type SeatsPreviewParams struct {
+	Add    *int64 `json:"add,omitempty"`
+	Target *int64 `json:"target,omitempty"`
+}
+
+// SeatsPreview corresponde ao schema SeatsPreviewOut do contrato.
+type SeatsPreview struct {
+	Addition  *SeatAddition  `json:"addition"`
+	Reduction *SeatReduction `json:"reduction"`
 }
 
 // SendMessageParams corresponde ao schema SendMessageIn do contrato.
@@ -1076,21 +1188,12 @@ type SendMessage struct {
 	IdempotentReplay bool            `json:"idempotent_replay,omitempty"`
 }
 
-// Settings corresponde ao schema SettingsOut do contrato.
-type Settings struct {
-	ID                            string    `json:"id"`
-	Version                       int64     `json:"version"`
-	MinTopupCents                 int64     `json:"min_topup_cents"`
-	TrialDays                     int64     `json:"trial_days"`
-	TrialBonusMicros              string    `json:"trial_bonus_micros"`
-	TrialMaxNumbers               int64     `json:"trial_max_numbers"`
-	TrialBonusExpires             bool      `json:"trial_bonus_expires"`
-	TrialWarningDays              int64     `json:"trial_warning_days"`
-	RefundWindowDays              int64     `json:"refund_window_days"`
-	ChargebackSuspensionThreshold int64     `json:"chargeback_suspension_threshold"`
-	Reason                        string    `json:"reason"`
-	CreatedBy                     *string   `json:"created_by"`
-	CreatedAt                     time.Time `json:"created_at"`
+// Sending corresponde ao schema SendingOut do contrato.
+type Sending struct {
+	Allowed bool `json:"allowed"`
+	// why new sends are blocked (null = allowed): trial_ended | no_plan | subscription_canceled | subscription_incomplete | trial_available | subscription_past_due
+	// Valores: "trial_ended", "no_plan", "subscription_canceled", "subscription_incomplete", "trial_available", "subscription_past_due".
+	Reason *string `json:"reason"`
 }
 
 // SignupSessionCreated corresponde ao schema SignupSessionCreatedOut do contrato.
@@ -1162,6 +1265,70 @@ type StatusNumber struct {
 	NameStatus     *string    `json:"name_status"`
 	MessagingLimit *string    `json:"messaging_limit"`
 	CheckedAt      *time.Time `json:"checked_at"`
+}
+
+// SubscriptionChangeResult corresponde ao schema SubscriptionChangeResultOut do contrato.
+type SubscriptionChangeResult struct {
+	Subscription Subscription `json:"subscription"`
+	Invoice      *Invoice     `json:"invoice"`
+	// the payment link could not be created now; retry with POST /v1/billing/invoices/{id}/pay
+	// Valor: "provider_unavailable".
+	PaymentLinkError *string `json:"payment_link_error,omitempty"`
+}
+
+// Subscription corresponde ao schema SubscriptionOut do contrato.
+type Subscription struct {
+	// none = never had a plan (trial still available); trial = free trial open; trial_ended = trial over without a subscription; incomplete = awaiting the first payment; same values as `billing.subscription_status` in GET /v1/status/integration
+	// Valores: "none", "trial", "trial_ended", "incomplete", "active", "past_due", "canceled".
+	Status         string  `json:"status"`
+	SubscriptionID *string `json:"subscription_id"`
+	Seats          *int64  `json:"seats"`
+	// seat reduction scheduled for the next renewal
+	ScheduledSeats     *int64        `json:"scheduled_seats"`
+	ConnectedNumbers   int64         `json:"connected_numbers"`
+	NumberLimit        NumberLimit   `json:"number_limit"`
+	Tier               *Tier         `json:"tier"`
+	UnitPriceMicros    *string       `json:"unit_price_micros"`
+	MonthlyTotalMicros *string       `json:"monthly_total_micros"`
+	MessagesPerNumber  *int64        `json:"messages_per_number"`
+	CurrentCycle       *CycleSummary `json:"current_cycle"`
+	NextRenewalAt      *time.Time    `json:"next_renewal_at"`
+	Renewal            *Renewal      `json:"renewal"`
+	CancelAtPeriodEnd  bool          `json:"cancel_at_period_end"`
+	CanceledAt         *time.Time    `json:"canceled_at"`
+	// Valores: "invoice_link", "wallet".
+	PaymentMethod   *string        `json:"payment_method"`
+	WalletConsent   *WalletConsent `json:"wallet_consent"`
+	Overage         Overage        `json:"overage"`
+	PastDue         *PastDue       `json:"past_due"`
+	Trial           *Trial         `json:"trial"`
+	TrialAvailable  bool           `json:"trial_available"`
+	Sending         Sending        `json:"sending"`
+	OpenInvoices    []Invoice      `json:"open_invoices"`
+	BillingEnabled  bool           `json:"billing_enabled"`
+	PaymentsEnabled bool           `json:"payments_enabled"`
+	// false = no published plan: contracting is unavailable (503)
+	PlanAvailable bool `json:"plan_available"`
+}
+
+// SubscriptionPreviewParams corresponde ao schema SubscriptionPreviewIn do contrato.
+type SubscriptionPreviewParams struct {
+	Seats int64 `json:"seats"`
+}
+
+// SubscriptionPreview corresponde ao schema SubscriptionPreviewOut do contrato.
+type SubscriptionPreview struct {
+	Seats              int64  `json:"seats"`
+	Tier               Tier   `json:"tier"`
+	UnitPriceMicros    string `json:"unit_price_micros"`
+	MonthlyTotalMicros string `json:"monthly_total_micros"`
+	// seats × messages_per_number, shared by all numbers
+	IncludedMessages   int64   `json:"included_messages"`
+	MessagesPerNumber  int64   `json:"messages_per_number"`
+	OveragePriceMicros *string `json:"overage_price_micros"`
+	ConnectedNumbers   int64   `json:"connected_numbers"`
+	PlanVersion        *int64  `json:"plan_version"`
+	Complimentary      bool    `json:"complimentary"`
 }
 
 // TemplateButtonParams corresponde ao schema TemplateButtonIn do contrato.
@@ -1290,21 +1457,21 @@ type TextParams struct {
 	Body string `json:"body"`
 }
 
+// Tier corresponde ao schema TierOut do contrato.
+type Tier struct {
+	MinNumbers int64 `json:"min_numbers"`
+	// null = open-ended (last tier)
+	MaxNumbers *int64 `json:"max_numbers"`
+	// price per contracted number per month, for ALL numbers
+	UnitPriceMicros string `json:"unit_price_micros"`
+}
+
 // TopError corresponde ao schema TopErrorOut do contrato.
 type TopError struct {
 	// Meta error code when known (e.g. 131047), otherwise the Meshio error code
 	Code  string `json:"code"`
 	Title string `json:"title"`
 	Count int64  `json:"count"`
-}
-
-// TopupParams corresponde ao schema TopupIn do contrato.
-type TopupParams struct {
-	// BRL cents (R$ 100,00 = 10000); minimum = setting min_topup_cents
-	AmountCents int64 `json:"amount_cents"`
-	// Optional; omit it. The payment page accepts Pix and credit card (single payment), or only Pix when card payments are blocked for the account. The top-up method stays null until paid and is then the method actually used at the checkout.
-	// Valores: "pix", "card".
-	Method string `json:"method,omitempty"`
 }
 
 // Topup corresponde ao schema TopupOut do contrato.
@@ -1361,20 +1528,21 @@ type TopupRefund struct {
 
 // Trial corresponde ao schema TrialOut do contrato.
 type Trial struct {
-	Exists bool `json:"exists"`
-	Active bool `json:"active"`
-	// Valores: "active", "ended", "canceled".
-	Status                *string    `json:"status"`
-	StartedAt             *time.Time `json:"started_at"`
-	EndsAt                *time.Time `json:"ends_at"`
-	Days                  *int64     `json:"days"`
-	DaysLeft              int64      `json:"days_left"`
-	BonusGrantedMicros    string     `json:"bonus_granted_micros"`
-	BonusRemainingMicros  string     `json:"bonus_remaining_micros"`
-	MaxNumbers            *int64     `json:"max_numbers"`
-	NumbersUsed           int64      `json:"numbers_used"`
-	NumberFeesDuringTrial bool       `json:"number_fees_during_trial,omitempty"`
-	SettingsVersion       *int64     `json:"settings_version"`
+	CycleID      string    `json:"cycle_id"`
+	Active       bool      `json:"active"`
+	PeriodStart  time.Time `json:"period_start"`
+	PeriodEnd    time.Time `json:"period_end"`
+	DaysLeft     int64     `json:"days_left"`
+	MaxNumbers   int64     `json:"max_numbers"`
+	MessageLimit int64     `json:"message_limit"`
+	UsedMessages int64     `json:"used_messages"`
+}
+
+// TrialTerms corresponde ao schema TrialTermsOut do contrato.
+type TrialTerms struct {
+	Days         int64 `json:"days"`
+	MaxNumbers   int64 `json:"max_numbers"`
+	MessageLimit int64 `json:"message_limit"`
 }
 
 // UpdateWebhookEndpointParams corresponde ao schema UpdateWebhookEndpointIn do contrato.
@@ -1437,35 +1605,31 @@ type Version struct {
 	ReleasedAt *time.Time `json:"released_at"`
 }
 
+// WalletConsent corresponde ao schema WalletConsentOut do contrato.
+type WalletConsent struct {
+	AcceptedAt   time.Time `json:"accepted_at"`
+	AcceptedBy   *string   `json:"accepted_by"`
+	TermsVersion *string   `json:"terms_version"`
+}
+
 // Wallet corresponde ao schema WalletOut do contrato.
 type Wallet struct {
 	// Valor: "BRL".
 	Currency string `json:"currency,omitempty"`
-	// total = paid + bonus
-	BalanceMicros      string `json:"balance_micros"`
-	PaidBalanceMicros  string `json:"paid_balance_micros"`
-	BonusBalanceMicros string `json:"bonus_balance_micros"`
-	// reserved for accepted sends awaiting delivery
-	ReservedMicros string `json:"reserved_micros"`
-	// charges owed awaiting balance (e.g. inbound without balance)
-	PendingMicros string `json:"pending_micros"`
-	// balance - reserved - pending + credit_limit
-	AvailableMicros           string `json:"available_micros"`
-	CreditLimitMicros         string `json:"credit_limit_micros"`
-	LowBalanceThresholdMicros string `json:"low_balance_threshold_micros"`
-	BillingExempt             bool   `json:"billing_exempt"`
-	// Valores: "ok", "low", "depleted", "negative", "exempt".
-	Status               string `json:"status"`
-	FeatureEnabled       bool   `json:"feature_enabled"`
-	PaymentsEnabled      bool   `json:"payments_enabled"`
-	MonthlyNumbersMicros string `json:"monthly_numbers_micros"`
-	PastDueMicros        string `json:"past_due_micros"`
-	// false after chargebacks/fraud: top-ups only by Pix (card disabled for this integrator)
-	CardPaymentsEnabled bool `json:"card_payments_enabled"`
-	// payment disputes (chargebacks) under review
-	OpenDisputes int64 `json:"open_disputes"`
-	// negative paid balance (e.g. after a chargeback) settled first by the next top-up
-	NegativeDueMicros string `json:"negative_due_micros"`
+	// paid balance: may pay invoices (opt-in) and is refundable
+	PaidBalanceMicros string `json:"paid_balance_micros"`
+	// valid bonus/promotional balance: never pays invoices
+	PromotionalBalanceMicros string           `json:"promotional_balance_micros"`
+	PromotionalLots          []PromotionalLot `json:"promotional_lots"`
+	// negative paid balance (e.g. after a chargeback)
+	NegativeDueMicros   string `json:"negative_due_micros"`
+	CardPaymentsEnabled bool   `json:"card_payments_enabled"`
+	OpenDisputes        int64  `json:"open_disputes"`
+	// the subscription is set to pay invoices with the paid balance
+	PaysInvoices  bool           `json:"pays_invoices"`
+	WalletConsent *WalletConsent `json:"wallet_consent"`
+	// current version of the pay-with-balance terms
+	TermsVersion string `json:"terms_version"`
 }
 
 // WebhookDelivery corresponde ao schema WebhookDeliveryOut do contrato.
