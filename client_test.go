@@ -278,6 +278,8 @@ func TestErrorMapping(t *testing.T) {
 		{404, "NOT_FOUND", ErrNotFound},
 		{409, "CONFLICT", ErrConflict},
 		{409, "IDEMPOTENCY_CONFLICT", ErrIdempotencyConflict},
+		{402, "ALLOWANCE_EXHAUSTED", ErrPaymentRequired},
+		{410, "DISCONTINUED", ErrGone},
 		{422, "VALIDATION_FAILED", ErrValidation},
 		{429, "RATE_LIMITED", ErrRateLimit},
 		{502, "BAD_GATEWAY", ErrServer},
@@ -450,19 +452,6 @@ func TestDeleteNoContentAndMethods(t *testing.T) {
 	}
 }
 
-func TestTopupIdempotency(t *testing.T) {
-	c, reqs, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 201, map[string]any{"id": "top_1", "status": "pending", "amount_cents": 10000})
-	})
-	tp, err := c.Billing.Topups.Create(context.Background(), &TopupParams{AmountCents: 10000})
-	if err != nil || tp.ID != "top_1" {
-		t.Fatalf("%v %+v", err, tp)
-	}
-	if (*reqs)[0].Header.Get("Idempotency-Key") == "" {
-		t.Fatal("topups.create deve enviar Idempotency-Key")
-	}
-}
-
 func TestMicrosToReais(t *testing.T) {
 	cases := map[string]string{
 		"0": "0.00", "1000000": "1.00", "12500000": "12.50", "1": "0.000001",
@@ -513,8 +502,8 @@ func TestOperationCoverage(t *testing.T) {
 			}
 		}
 	}
-	if count != 67 {
-		t.Errorf("contrato com %d operações, esperava 67", count)
+	if count != 73 {
+		t.Errorf("contrato com %d operações, esperava 73", count)
 	}
 }
 

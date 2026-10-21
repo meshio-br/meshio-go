@@ -117,24 +117,26 @@ func TestIntegrationReadOnly(t *testing.T) {
 		{"billing.wallet", func() error {
 			w, err := c.Billing.Wallet(ctx)
 			if err == nil {
-				if _, err := MicrosToReais(w.BalanceMicros); err != nil {
+				if _, err := MicrosToReais(w.PaidBalanceMicros); err != nil {
 					return err
 				}
 			}
 			return err
 		}},
 		{"billing.pricing", func() error { _, err := c.Billing.Pricing(ctx); return err }},
-		{"billing.entries.list", func() error { _, err := c.Billing.Entries.List(ctx, &BillingEntriesListParams{Limit: 5}); return err }},
-		{"billing.entries.export_csv", func() error { _, err := c.Billing.Entries.ExportCSV(ctx, nil); return err }},
-		{"billing.consumption", func() error { _, err := c.Billing.Consumption(ctx, nil); return err }},
-		{"billing.number_fees.list", func() error {
-			_, err := c.Billing.NumberFees.List(ctx, &BillingNumberFeesListParams{Limit: 5})
+		{"billing.subscription.get", func() error { _, err := c.Billing.Subscription.Get(ctx); return err }},
+		{"billing.allowance.get", func() error { _, err := c.Billing.Allowance.Get(ctx); return err }},
+		{"billing.allowance.consumptions", func() error {
+			_, err := c.Billing.Allowance.Consumptions(ctx, &BillingAllowanceConsumptionsListParams{Limit: 5})
 			return err
 		}},
-		{"billing.number_fees.summary", func() error { _, err := c.Billing.NumberFees.Summary(ctx); return err }},
-		{"billing.trial", func() error { _, err := c.Billing.Trial(ctx); return err }},
-		{"billing.settings.get", func() error { _, err := c.Billing.Settings.Get(ctx); return err }},
-		{"billing.bonus_offers", func() error { _, err := c.Billing.BonusOffers(ctx); return err }},
+		{"billing.cycles.list", func() error { _, err := c.Billing.Cycles.List(ctx, &BillingCyclesListParams{Limit: 5}); return err }},
+		{"billing.invoices.list", func() error {
+			_, err := c.Billing.Invoices.List(ctx, &BillingInvoicesListParams{Limit: 5})
+			return err
+		}},
+		{"billing.entries.list", func() error { _, err := c.Billing.Entries.List(ctx, &BillingEntriesListParams{Limit: 5}); return err }},
+		{"billing.entries.export_csv", func() error { _, err := c.Billing.Entries.ExportCSV(ctx, nil); return err }},
 		{"billing.topups.list", func() error { _, err := c.Billing.Topups.List(ctx, &TopupsListParams{Limit: 5}); return err }},
 	}
 	for _, ck := range checks {
@@ -331,32 +333,31 @@ func TestIntegrationContractDrift(t *testing.T) {
 	c := integrationClient(t)
 	ctx := ctxT(t)
 	targets := map[string]any{
-		"/v1/version":                     &Version{},
-		"/v1/businesses?limit=5":          &BusinessPage{},
-		"/v1/channels?limit=5":            &ChannelPage{},
-		"/v1/messages?limit=5":            &MessagePage{},
-		"/v1/conversations?limit=5":       &ConversationPage{},
-		"/v1/templates?limit=5":           &TemplatePage{},
-		"/v1/connect-links?limit=5":       &ConnectLinkPage{},
-		"/v1/webhook-endpoints?limit=5":   &WebhookEndpointPage{},
-		"/v1/webhook-deliveries?limit=5":  &WebhookDeliveryPage{},
-		"/v1/events?limit=5":              &EventPage{},
-		"/v1/usage":                       &Usage{},
-		"/v1/overview":                    &Overview{},
-		"/v1/status/integration":          &IntegrationStatus{},
-		"/v1/compliance/status":           &ComplianceStatus{},
-		"/v1/consents?limit=5":            &ConsentPage{},
-		"/v1/opt-outs?limit=5":            &OptOutPage{},
-		"/v1/billing/wallet":              &Wallet{},
-		"/v1/billing/pricing":             &EffectivePricing{},
-		"/v1/billing/entries?limit=5":     &EntryPage{},
-		"/v1/billing/consumption":         &Consumption{},
-		"/v1/billing/number-fees?limit=5": &ChannelFeePage{},
-		"/v1/billing/number-fees/summary": &NumberFeeSummary{},
-		"/v1/billing/trial":               &Trial{},
-		"/v1/billing/settings/public":     &Settings{},
-		"/v1/billing/bonus-offers":        &BonusOfferList{},
-		"/v1/billing/topups?limit=5":      &TopupPage{},
+		"/v1/version":                                &Version{},
+		"/v1/businesses?limit=5":                     &BusinessPage{},
+		"/v1/channels?limit=5":                       &ChannelPage{},
+		"/v1/messages?limit=5":                       &MessagePage{},
+		"/v1/conversations?limit=5":                  &ConversationPage{},
+		"/v1/templates?limit=5":                      &TemplatePage{},
+		"/v1/connect-links?limit=5":                  &ConnectLinkPage{},
+		"/v1/webhook-endpoints?limit=5":              &WebhookEndpointPage{},
+		"/v1/webhook-deliveries?limit=5":             &WebhookDeliveryPage{},
+		"/v1/events?limit=5":                         &EventPage{},
+		"/v1/usage":                                  &Usage{},
+		"/v1/overview":                               &Overview{},
+		"/v1/status/integration":                     &IntegrationStatus{},
+		"/v1/compliance/status":                      &ComplianceStatus{},
+		"/v1/consents?limit=5":                       &ConsentPage{},
+		"/v1/opt-outs?limit=5":                       &OptOutPage{},
+		"/v1/billing/wallet":                         &Wallet{},
+		"/v1/billing/pricing":                        &Pricing{},
+		"/v1/billing/subscription":                   &Subscription{},
+		"/v1/billing/allowance":                      &Allowance{},
+		"/v1/billing/allowance/consumptions?limit=5": &ConsumptionPage{},
+		"/v1/billing/cycles?limit=5":                 &CyclePage{},
+		"/v1/billing/invoices?limit=5":               &InvoicePage{},
+		"/v1/billing/entries?limit=5":                &EntryPage{},
+		"/v1/billing/topups?limit=5":                 &TopupPage{},
 	}
 	for path, target := range targets {
 		req, _ := http.NewRequestWithContext(ctx, "GET", c.baseURL+path, nil)
@@ -377,6 +378,137 @@ func TestIntegrationContractDrift(t *testing.T) {
 			t.Logf("DRIFT %s: %v", path, err)
 		}
 	}
+}
+
+// TestIntegrationBilling lê assinatura, franquia, ciclos e faturas e calcula prévias,
+// sem contratar nem pagar (o integrador da pilha já tem assinatura ativa).
+func TestIntegrationBilling(t *testing.T) {
+	c := integrationClient(t)
+	ctx := ctxT(t)
+
+	sub, err := c.Billing.Subscription.Get(ctx)
+	if err != nil {
+		t.Fatalf("subscription.get: %v", err)
+	}
+	if sub.Status != "active" || sub.Seats == nil || *sub.Seats < 1 || sub.CurrentCycle == nil {
+		t.Fatalf("esperava assinatura ativa com vagas e ciclo: %+v", sub)
+	}
+	if sub.NumberLimit.Limit < *sub.Seats {
+		t.Errorf("limite de números inconsistente: %+v", sub.NumberLimit)
+	}
+	if sub.MonthlyTotalMicros == nil {
+		t.Fatalf("assinatura sem total mensal")
+	}
+	if _, err := MicrosToReais(*sub.MonthlyTotalMicros); err != nil {
+		t.Errorf("total mensal: %v", err)
+	}
+	t.Logf("assinatura %s: %d vagas, %d números, ciclo %s até %s",
+		sub.Status, *sub.Seats, sub.ConnectedNumbers, sub.CurrentCycle.ID, sub.CurrentCycle.PeriodEnd.Format(time.RFC3339))
+
+	al, err := c.Billing.Allowance.Get(ctx)
+	if err != nil {
+		t.Fatalf("allowance.get: %v", err)
+	}
+	if al.CycleID == nil || *al.CycleID != sub.CurrentCycle.ID {
+		t.Errorf("franquia em outro ciclo: %v x %s", al.CycleID, sub.CurrentCycle.ID)
+	}
+	want := al.IncludedMessages - al.UsedMessages - al.HeldMessages
+	if want < 0 {
+		want = 0
+	}
+	if al.RemainingMessages != want {
+		t.Errorf("restantes = %d, esperava %d", al.RemainingMessages, want)
+	}
+	t.Logf("franquia: %d incluídas, %d usadas, %d restantes (%d%%)", al.IncludedMessages, al.UsedMessages, al.RemainingMessages, al.Percent)
+
+	it := c.Billing.Allowance.ConsumptionsAll(ctx, &BillingAllowanceConsumptionsListParams{CycleID: *al.CycleID, Limit: 2})
+	for i := 0; i < 3 && it.Next(); i++ {
+		if cs := it.Current(); cs.CycleID == nil || *cs.CycleID != *al.CycleID {
+			t.Errorf("evidência fora do ciclo filtrado: %+v", cs)
+		}
+	}
+	if err := it.Err(); err != nil {
+		t.Errorf("allowance.consumptions: %v", err)
+	}
+
+	cycles, err := c.Billing.Cycles.List(ctx, &BillingCyclesListParams{Limit: 5})
+	if err != nil || len(cycles.Data) == 0 {
+		t.Fatalf("cycles.list: %v (%d)", err, len(cycles.Data))
+	}
+
+	invs, err := c.Billing.Invoices.List(ctx, &BillingInvoicesListParams{Limit: 5})
+	if err != nil {
+		t.Fatalf("invoices.list: %v", err)
+	}
+	if len(invs.Data) > 0 {
+		inv, err := c.Billing.Invoices.Get(ctx, invs.Data[0].ID)
+		if err != nil || inv.ID != invs.Data[0].ID {
+			t.Fatalf("invoices.get: %v", err)
+		}
+	}
+	if _, err := c.Billing.Invoices.Get(ctx, "inv_doesnotexist0000000000"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("fatura inexistente deveria dar 404: %v", err)
+	}
+
+	pv, err := c.Billing.Subscription.Preview(ctx, &SubscriptionPreviewParams{Seats: 10})
+	if err != nil {
+		t.Fatalf("subscription.preview: %v", err)
+	}
+	if pv.Seats != 10 || pv.IncludedMessages != 10*pv.MessagesPerNumber {
+		t.Errorf("prévia inconsistente: %+v", pv)
+	}
+
+	add := int64(1)
+	sp, err := c.Billing.Subscription.PreviewSeats(ctx, &SeatsPreviewParams{Add: &add})
+	if err != nil {
+		t.Fatalf("subscription.seats_preview: %v", err)
+	}
+	if sp.Addition == nil {
+		t.Errorf("prévia de acréscimo vazia: %+v", sp)
+	}
+
+	// a prévia não altera a assinatura
+	after, err := c.Billing.Subscription.Get(ctx)
+	if err != nil || *after.Seats != *sub.Seats {
+		t.Errorf("prévia não deveria alterar vagas: %v", err)
+	}
+
+	if _, err := c.Billing.Subscription.Preview(ctx, &SubscriptionPreviewParams{Seats: 0}); !errors.Is(err, ErrValidation) {
+		t.Errorf("0 vagas deveria dar 422: %v", err)
+	}
+}
+
+// TestIntegrationDiscontinuedRoute confere o 410 DISCONTINUED de uma rota do modelo anterior.
+func TestIntegrationDiscontinuedRoute(t *testing.T) {
+	c := integrationClient(t)
+	ctx := ctxT(t)
+
+	// HTTP cru: o SDK não expõe mais as rotas descontinuadas.
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/billing/trial", nil)
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusGone {
+		t.Fatalf("esperava 410, veio %d: %s", resp.StatusCode, body)
+	}
+
+	// o mesmo corpo, interpretado pelo SDK
+	apiErr := newAPIError(resp, body)
+	if !errors.Is(apiErr, ErrGone) || apiErr.Code != "DISCONTINUED" || apiErr.Reason != "discontinued" ||
+		apiErr.MessagePt == "" || apiErr.Replacement == "" || apiErr.RequestID == "" {
+		t.Fatalf("410 mal interpretado: %+v", apiErr)
+	}
+
+	// um POST descontinuado, pelo caminho normal do cliente: não é repetido
+	err = c.do(ctx, call{method: http.MethodPost, path: "/v1/billing/topups", body: map[string]any{}}, nil, nil)
+	if !errors.Is(err, ErrGone) {
+		t.Fatalf("POST /v1/billing/topups: esperava 410, veio %v", err)
+	}
+	t.Logf("410 DISCONTINUED → %s", apiErr.Replacement)
 }
 
 // simPost envia JSON ao Simulador da Meta e decodifica a resposta.
@@ -404,6 +536,19 @@ func simPost(t *testing.T, ctx context.Context, url string, body any, out any) {
 	}
 }
 
+// skipIfNumberLimit encerra o teste quando a conta já ocupou todas as vagas: a pilha
+// compartilhada pode ter mais números conectados que vagas contratadas.
+func skipIfNumberLimit(t *testing.T, err error) {
+	t.Helper()
+	var apiErr *APIError
+	if errors.Is(err, ErrNumberLimitReached) && errors.As(err, &apiErr) {
+		if apiErr.StatusCode != http.StatusConflict || apiErr.MessagePt == "" {
+			t.Fatalf("NUMBER_LIMIT_REACHED mal formado: %+v", apiErr)
+		}
+		t.Skipf("409 NUMBER_LIMIT_REACHED (%s): %s", apiErr.Reason, apiErr.MessagePt)
+	}
+}
+
 // TestIntegrationConnectNumberAndSend conecta um número pelo Simulador, simula uma
 // mensagem recebida (abre a janela de 24 h) e envia texto livre com idempotência.
 func TestIntegrationConnectNumberAndSend(t *testing.T) {
@@ -421,6 +566,7 @@ func TestIntegrationConnectNumberAndSend(t *testing.T) {
 	}
 	biz := bizs.Data[0]
 	session, err := c.Channels.SignupSessions.Create(ctx, &CreateSignupSessionParams{BusinessID: biz.ID, Mode: "cloud_api"})
+	skipIfNumberLimit(t, err)
 	if err != nil {
 		t.Fatalf("signup_sessions.create: %v", err)
 	}
@@ -455,6 +601,7 @@ func TestIntegrationConnectNumberAndSend(t *testing.T) {
 		State: session.State, Code: submitted.Assets.Code, WABAID: submitted.Assets.WABAID,
 		PhoneNumberID: submitted.Assets.PhoneNumberID, Event: "FINISH",
 	})
+	skipIfNumberLimit(t, err)
 	if err != nil {
 		t.Fatalf("signup_sessions.complete: %v", err)
 	}
