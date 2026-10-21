@@ -551,6 +551,22 @@ func skipIfNumberLimit(t *testing.T, err error) {
 
 // TestIntegrationConnectNumberAndSend conecta um número pelo Simulador, simula uma
 // mensagem recebida (abre a janela de 24 h) e envia texto livre com idempotência.
+// verifiedBusiness: envio exige cliente verificado (CNPJ e atividade); usa um já verificado.
+func verifiedBusiness(t *testing.T, c *Client, ctx context.Context) string {
+	t.Helper()
+	status, err := c.Compliance.Status(ctx)
+	if err != nil {
+		t.Fatalf("compliance.status: %v", err)
+	}
+	for _, b := range status.Businesses {
+		if b.VerificationStatus == "verified" && !b.Suspended {
+			return b.BusinessID
+		}
+	}
+	t.Fatalf("nenhum cliente verificado na pilha")
+	return ""
+}
+
 func TestIntegrationConnectNumberAndSend(t *testing.T) {
 	c := integrationClient(t)
 	sim := strings.TrimRight(os.Getenv("MESHIO_TEST_SIM_URL"), "/")
@@ -560,12 +576,8 @@ func TestIntegrationConnectNumberAndSend(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	bizs, err := c.Businesses.List(ctx, &BusinessesListParams{Limit: 1})
-	if err != nil || len(bizs.Data) == 0 {
-		t.Fatalf("businesses.list: %v", err)
-	}
-	biz := bizs.Data[0]
-	session, err := c.Channels.SignupSessions.Create(ctx, &CreateSignupSessionParams{BusinessID: biz.ID, Mode: "cloud_api"})
+	biz := verifiedBusiness(t, c, ctx)
+	session, err := c.Channels.SignupSessions.Create(ctx, &CreateSignupSessionParams{BusinessID: biz, Mode: "cloud_api"})
 	skipIfNumberLimit(t, err)
 	if err != nil {
 		t.Fatalf("signup_sessions.create: %v", err)
@@ -611,7 +623,7 @@ func TestIntegrationConnectNumberAndSend(t *testing.T) {
 			t.Errorf("channels.disconnect: %v", err)
 		}
 	}()
-	if ch.BusinessID != biz.ID {
+	if ch.BusinessID != biz {
 		t.Fatalf("canal em outra empresa: %s", ch.BusinessID)
 	}
 	if _, err := c.Channels.HealthCheck(ctx, ch.ID); err != nil {
