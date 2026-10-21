@@ -265,7 +265,7 @@ Valores `*_micros` são strings inteiras em milionésimos de real (R$ 1 = `"1000
 
 ```go
 sub, _ := client.Billing.Subscription.Get(ctx)
-reais, _ := meshio.MicrosToReais(*sub.MonthlyTotalMicros) // "99.80"
+reais, _ := meshio.MicrosToReais(*sub.MonthlyTotalMicros) // "119.80"
 r, _ := meshio.MicrosToRat(*sub.MonthlyTotalMicros)        // *big.Rat para cálculos exatos
 ```
 
