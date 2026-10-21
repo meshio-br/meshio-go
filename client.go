@@ -233,7 +233,9 @@ func (c *Client) do(ctx context.Context, cl call, out any, opts []RequestOption)
 			return decodeOK(body, out, cl.raw)
 		}
 		apiErr := newAPIError(resp, body)
-		retryable := resp.StatusCode == 429 || (canRetryAfterSend && isRetryableStatus(resp.StatusCode))
+		// 503 BILLING_NOT_CONFIGURED não é transitório: nunca repete.
+		retryable := resp.StatusCode == 429 ||
+			(canRetryAfterSend && isRetryableStatus(resp.StatusCode) && !nonTransientServerCodes[apiErr.Code])
 		if retryable && attempt < c.maxRetries {
 			if serr := c.sleep(ctx, backoff(attempt, apiErr.RetryAfter)); serr != nil {
 				return serr
@@ -347,6 +349,9 @@ func decodeOK(body []byte, out any, raw bool) error {
 	}
 	return nil
 }
+
+// nonTransientServerCodes: 5xx em que repetir não muda o resultado (ex.: cobrança não configurada).
+var nonTransientServerCodes = map[string]bool{"BILLING_NOT_CONFIGURED": true}
 
 func isRetryableStatus(s int) bool {
 	switch s {

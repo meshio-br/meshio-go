@@ -252,6 +252,7 @@ Regra de novas tentativas (até `WithMaxRetries`, padrão 2):
 - **429** é sempre repetido, esperando `Retry-After` quando presente.
 - **Falha de conexão antes do envio** (DNS, conexão recusada) é sempre repetida, em qualquer método.
 - **500, 502, 503, 504 e timeout** só são repetidos em GET ou quando a requisição leva `Idempotency-Key` (`Messages.Send`, `Billing.Subscription.Create`, `Billing.Subscription.ChangeSeats`, `Billing.Invoices.Pay`). Os demais POST, PATCH e DELETE não são repetidos nesses casos.
+- **503 `BILLING_NOT_CONFIGURED`** nunca é repetido, porque não é transitório (a cobrança precisa ser configurada).
 - **Outros 4xx** nunca são repetidos.
 
 Sem `Retry-After`, a espera é 0,5 s, 1 s, 2 s… (máx. 8 s) com jitter.

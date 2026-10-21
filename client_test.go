@@ -225,6 +225,23 @@ func TestNoRetryForNonIdempotentPOSTOn5xx(t *testing.T) {
 	}
 }
 
+func TestNoRetryForBillingNotConfigured(t *testing.T) {
+	c, reqs, sleeps := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 503, errBody("BILLING_NOT_CONFIGURED", "cobrança não configurada", nil))
+	})
+	_, err := c.Billing.Subscription.Get(context.Background())
+	if !errors.Is(err, ErrBillingNotConfigured) || !errors.Is(err, ErrServer) {
+		t.Fatalf("esperava ErrBillingNotConfigured, veio %v", err)
+	}
+	_, err = c.Billing.Subscription.Create(context.Background(), &CreateSubscriptionParams{Seats: 1, PaymentMethod: "invoice_link"})
+	if !errors.Is(err, ErrBillingNotConfigured) {
+		t.Fatalf("esperava ErrBillingNotConfigured, veio %v", err)
+	}
+	if len(*reqs) != 2 || len(*sleeps) != 0 {
+		t.Fatalf("503 BILLING_NOT_CONFIGURED não deve ser repetido: tentativas=%d esperas=%d", len(*reqs), len(*sleeps))
+	}
+}
+
 func TestNoRetryOn4xx(t *testing.T) {
 	c, reqs, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 404, errBody("NOT_FOUND", "não encontrado", nil))
